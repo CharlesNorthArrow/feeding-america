@@ -1,0 +1,1708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feeding America — Food Bank Finder</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── Top bar ── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; height: 52px; background: #003057; flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+#topbar-left { display: flex; align-items: center; gap: 10px; }
+#topbar-logo { height: 28px; }
+#topbar-title { color: #fff; font-size: 16px; font-weight: 600; letter-spacing: .2px; }
+#lang-toggle {
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
+  color: #fff; padding: 4px 12px; border-radius: 16px; cursor: pointer;
+  font-size: 13px; font-weight: 500; transition: background .15s;
+}
+#lang-toggle:hover { background: rgba(255,255,255,.22); }
+
+/* ── Main layout ── */
+#main { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 340px; flex-shrink: 0; display: flex; flex-direction: column;
+  background: #fff; border-right: 1px solid #dde3ea; overflow: hidden;
+  z-index: 1;
+}
+
+#search-wrap { padding: 12px; border-bottom: 1px solid #eaecef; display: flex; gap: 8px; }
+#search-input {
+  flex: 1; padding: 7px 10px; border: 1px solid #c8cfd8; border-radius: 6px;
+  font-size: 13px; outline: none;
+}
+#search-input:focus { border-color: #E8703A; box-shadow: 0 0 0 2px rgba(232,112,58,.15); }
+#state-filter {
+  padding: 7px 8px; border: 1px solid #c8cfd8; border-radius: 6px;
+  font-size: 13px; background: #fff; outline: none; cursor: pointer;
+}
+#state-filter:focus { border-color: #E8703A; }
+
+/* bank count bar */
+#bank-count-bar {
+  padding: 10px 14px 9px; background: #fff; border-bottom: 2px solid #eaecef;
+  display: flex; align-items: baseline; gap: 5px;
+}
+#bank-count-num { font-size: 22px; font-weight: 800; color: #E8703A; line-height: 1; }
+#bank-count-label { font-size: 12px; color: #6b7888; }
+
+/* geocoding progress */
+#geocode-bar { padding: 8px 12px; border-bottom: 1px solid #eaecef; display: none; }
+#geocode-bar.visible { display: block; }
+#geocode-label { font-size: 12px; color: #666; margin-bottom: 5px; }
+#geocode-track { height: 4px; background: #eee; border-radius: 2px; overflow: hidden; }
+#geocode-fill { height: 100%; background: #E8703A; border-radius: 2px; transition: width .3s; width: 0%; }
+
+/* bank list */
+#bank-list { flex: 1; overflow-y: auto; }
+.bank-item {
+  padding: 11px 14px; border-bottom: 1px solid #f0f2f5; cursor: pointer;
+  display: flex; align-items: flex-start; gap: 10px; transition: background .1s;
+}
+.bank-item:hover { background: #f8f9fb; }
+.bank-item.active { background: #fff4ee; border-left: 3px solid #E8703A; }
+.bank-icon {
+  width: 14px; height: 14px; border-radius: 50%; background: #f5c518;
+  border: 2.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2);
+  flex-shrink: 0; margin-top: 4px;
+}
+.bank-item.active .bank-icon { background: #003057; border-color: #f5c518; }
+.bank-info { min-width: 0; }
+.bank-item-name { font-size: 13px; font-weight: 600; color: #1a2533; line-height: 1.3; }
+.bank-item-loc { font-size: 12px; color: #6b7888; margin-top: 2px; }
+.no-results { padding: 32px 16px; text-align: center; color: #999; font-size: 13px; }
+
+/* ── Map ── */
+#map { flex: 1; position: relative; overflow: hidden; }
+#map-canvas { width: 100%; height: 100%; }
+
+/* ── Right detail panel ── */
+#detail-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 300px;
+  background: #fff; box-shadow: -3px 0 12px rgba(0,0,0,.15);
+  display: flex; flex-direction: column; z-index: 4;
+  transform: translateX(100%); transition: transform .25s ease;
+}
+#detail-panel.visible { transform: translateX(0); }
+#dp-header {
+  padding: 14px 14px 12px; background: #003057; color: #fff;
+  display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0;
+}
+#dp-header-text { flex: 1; min-width: 0; }
+#dp-name { font-size: 14px; font-weight: 700; line-height: 1.4; }
+#dp-location { font-size: 11px; margin-top: 3px; opacity: .8; line-height: 1.4; }
+#dp-close {
+  background: rgba(255,255,255,.15); border: none; color: #fff;
+  width: 24px; height: 24px; border-radius: 4px; cursor: pointer;
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 1px; transition: background .15s;
+}
+#dp-close:hover { background: rgba(255,255,255,.3); }
+#dp-body { padding: 12px 14px; overflow-y: auto; flex: 1; }
+.detail-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.detail-label { color: #888; flex-shrink: 0; width: 68px; font-size: 11px; padding-top: 2px; text-transform: uppercase; letter-spacing: .4px; }
+.detail-val { color: #1a2533; word-break: break-word; line-height: 1.4; }
+.detail-val a { color: #E8703A; text-decoration: none; }
+.detail-val a:hover { text-decoration: underline; }
+.counties-list { font-size: 12px; color: #555; line-height: 1.6; }
+#dp-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #eee; flex-wrap: wrap; flex-shrink: 0; }
+.detail-btn {
+  flex: 1; min-width: 70px; padding: 7px 8px; border-radius: 6px; border: none;
+  cursor: pointer; font-size: 12px; font-weight: 600; text-align: center;
+  text-decoration: none; display: inline-block; transition: opacity .15s;
+}
+.detail-btn:hover { opacity: .85; }
+.btn-primary { background: #E8703A; color: #fff; }
+.btn-secondary { background: #f0f4f8; color: #003057; }
+.btn-outline { background: transparent; border: 1px solid #E8703A; color: #E8703A; }
+
+/* ── Nearby panel (top-left) ── */
+#nearby-panel {
+  position: absolute; top: 12px; left: 12px; z-index: 3;
+  background: #fff; border: 1px solid #dde3ea; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15); padding: 12px; width: 230px;
+}
+#nearby-title {
+  font-size: 11px; font-weight: 700; color: #003057; text-transform: uppercase;
+  letter-spacing: .5px; margin-bottom: 9px;
+}
+#nearby-addr-row { display: flex; gap: 5px; margin-bottom: 7px; }
+#addr-input {
+  flex: 1; padding: 6px 8px; border: 1px solid #c8cfd8; border-radius: 5px;
+  font-size: 12px; outline: none;
+}
+#addr-input:focus { border-color: #E8703A; box-shadow: 0 0 0 2px rgba(232,112,58,.12); }
+#addr-go-btn {
+  padding: 6px 10px; background: #E8703A; color: #fff; border: none; border-radius: 5px;
+  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+#addr-go-btn:hover { background: #d4622f; }
+#locate-user-btn {
+  width: 100%; padding: 6px 0; background: #f0f4f8; color: #003057; border: 1px solid #c8cfd8;
+  border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; margin-bottom: 9px;
+  transition: background .1s;
+}
+#locate-user-btn:hover { background: #e2eaf2; }
+#radius-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#radius-label { font-size: 11px; color: #888; white-space: nowrap; }
+.radius-btn {
+  padding: 3px 8px; border: 1px solid #c8cfd8; border-radius: 12px; background: #fff;
+  font-size: 11px; font-weight: 500; cursor: pointer; color: #1a2533; transition: all .1s;
+}
+.radius-btn:hover { border-color: #E8703A; color: #E8703A; }
+.radius-btn.active { background: #003057; border-color: #003057; color: #fff; }
+#nearby-count {
+  margin-top: 8px; font-size: 11px; color: #666; display: none;
+}
+#nearby-count.visible { display: block; }
+#clear-nearby {
+  background: none; border: none; color: #E8703A; font-size: 11px; cursor: pointer;
+  padding: 0; margin-left: 4px; text-decoration: underline;
+}
+
+/* ── Health layers panel (bottom-left, always visible) ── */
+#layer-panel {
+  position: absolute; bottom: 32px; left: 12px; z-index: 3;
+  background: #fff; border: 1px solid #dde3ea; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15); padding: 10px 10px 8px; width: 220px;
+}
+#layer-panel-title {
+  font-size: 11px; font-weight: 700; color: #003057; text-transform: uppercase;
+  letter-spacing: .5px; margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid #eaecef;
+}
+.layer-opt {
+  display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 6px;
+  cursor: pointer; font-size: 12px; color: #1a2533; transition: background .1s;
+  margin-bottom: 3px; border: 1px solid transparent;
+}
+.layer-opt:hover { background: #f5f7fa; border-color: #dde3ea; }
+.layer-opt.active { background: #f0f4f8; border-color: #003057; color: #003057; font-weight: 600; }
+.layer-swatch {
+  width: 30px; height: 10px; border-radius: 3px; flex-shrink: 0;
+}
+#layer-legend { margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; display: none; }
+#layer-legend.visible { display: block; }
+#legend-title { font-size: 10px; color: #888; margin-bottom: 4px; }
+#legend-bar { height: 8px; border-radius: 3px; margin-bottom: 3px; }
+#legend-labels { display: flex; justify-content: space-between; font-size: 10px; color: #888; }
+
+/* ── Loading overlay ── */
+#loading-overlay {
+  position: absolute; inset: 0; background: rgba(255,255,255,.85);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  z-index: 10; gap: 12px;
+}
+#loading-overlay.hidden { display: none; }
+#loading-msg { font-size: 14px; color: #444; }
+.spinner {
+  width: 32px; height: 32px; border: 3px solid #eee; border-top-color: #E8703A;
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* markers are now a GL circle layer — no DOM marker styles needed */
+
+/* ── County hover tooltip ── */
+#map-tooltip {
+  position: fixed; display: none; pointer-events: none; z-index: 20;
+  background: rgba(0,0,0,.72); color: #fff;
+  padding: 5px 9px; border-radius: 4px;
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+
+/* scrollbar */
+#bank-list::-webkit-scrollbar { width: 5px; }
+#bank-list::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+#dp-body::-webkit-scrollbar { width: 4px; }
+#dp-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+/* Mapbox popup */
+.mapboxgl-popup-content { padding: 10px 14px; font-size: 13px; border-radius: 6px; max-width: 220px; }
+.popup-name { font-weight: 700; color: #1a2533; margin-bottom: 4px; }
+.popup-loc { color: #666; font-size: 12px; }
+
+@media (max-width: 640px) {
+  #sidebar { width: 100%; position: absolute; bottom: 0; left: 0; height: 45vh; z-index: 5; }
+  #main { flex-direction: column-reverse; }
+  #detail-panel { width: 100%; top: auto; height: 50vh; transform: translateY(100%); }
+  #detail-panel.visible { transform: translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="topbar-left">
+    <span id="topbar-title">Feeding America — Food Bank Finder</span>
+  </div>
+  <button id="lang-toggle" onclick="toggleLang()">Español</button>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div id="search-wrap">
+      <input id="search-input" type="text" placeholder="Search food banks…" oninput="setState({searchQuery: this.value, selectedBank: null})">
+      <select id="state-filter" onchange="onStateFilter(this.value)">
+        <option value="">All states</option>
+      </select>
+    </div>
+    <div id="bank-count-bar"></div>
+    <div id="geocode-bar">
+      <div id="geocode-label">Locating food banks…</div>
+      <div id="geocode-track"><div id="geocode-fill"></div></div>
+    </div>
+    <div id="bank-list"></div>
+  </div>
+
+  <div id="map">
+    <div id="map-canvas"></div>
+
+    <!-- Right-side detail panel -->
+    <div id="detail-panel">
+      <div id="dp-header">
+        <div id="dp-header-text">
+          <div id="dp-name"></div>
+          <div id="dp-location"></div>
+        </div>
+        <button id="dp-close" onclick="deselectBank()">✕</button>
+      </div>
+      <div id="dp-body"></div>
+      <div id="dp-actions"></div>
+    </div>
+
+    <!-- Near Me panel (top-left) -->
+    <div id="nearby-panel">
+      <div id="nearby-title">Near Me</div>
+      <div id="nearby-addr-row">
+        <input id="addr-input" type="text" placeholder="Enter address…"
+               onkeydown="if(event.key==='Enter')searchAddress()">
+        <button id="addr-go-btn" onclick="searchAddress()">Go</button>
+      </div>
+      <button id="locate-user-btn" onclick="locateUser()">📍 Use my location</button>
+      <div id="radius-row">
+        <span id="radius-label">Radius:</span>
+        <button class="radius-btn" onclick="setRadius(5)">5 mi</button>
+        <button class="radius-btn active" onclick="setRadius(10)">10 mi</button>
+        <button class="radius-btn" onclick="setRadius(20)">20 mi</button>
+        <button class="radius-btn" onclick="setRadius(30)">30 mi</button>
+      </div>
+      <div id="nearby-count">
+        <span id="nearby-count-text"></span>
+        <button id="clear-nearby" onclick="clearNearby()">Clear</button>
+      </div>
+    </div>
+
+    <!-- Health layers panel (bottom-left, always open) -->
+    <div id="layer-panel">
+      <div id="layer-panel-title">Health Layers</div>
+      <div class="layer-opt" id="opt-PHLTH" onclick="setLayer('PHLTH')">
+        <div class="layer-swatch" style="background:linear-gradient(to right,#fdd49e,#7f0000)"></div>
+        Poor / Fair Health
+      </div>
+      <div class="layer-opt" id="opt-OBESITY" onclick="setLayer('OBESITY')">
+        <div class="layer-swatch" style="background:linear-gradient(to right,#fed976,#800026)"></div>
+        Obesity Rate
+      </div>
+      <div class="layer-opt" id="opt-DIABETES" onclick="setLayer('DIABETES')">
+        <div class="layer-swatch" style="background:linear-gradient(to right,#c6dbef,#084594)"></div>
+        Diabetes Rate
+      </div>
+      <div class="layer-opt" id="opt-SNAP" onclick="setLayer('SNAP')">
+        <div class="layer-swatch" style="background:linear-gradient(to right,#edf8e9,#005a32)"></div>
+        SNAP Recipients
+      </div>
+      <div id="layer-legend">
+        <div id="legend-title"></div>
+        <div id="legend-bar"></div>
+        <div id="legend-labels"><span id="legend-min"></span><span id="legend-max"></span></div>
+      </div>
+    </div>
+
+    <div id="map-tooltip"></div>
+
+    <div id="loading-overlay">
+      <div class="spinner"></div>
+      <div id="loading-msg">Loading map…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────
+// DATA
+// ──────────────────────────────────────────────
+// [name, addr, city, state, zip, phone, website, slug, counties]
+const RAW_BANKS = [
+["Food Bank of Alaska Inc.","2192 Viking Drive","Anchorage","AK","99501","907.272.3663","foodbankofalaska.org","food-bank-of-alaska","aleutians east, aleutians west, anchorage, bethel, bristol bay, chugach, copper river, denali, dillingham, fairbanks north star, haines, hoonah angoon, juneau, kenai peninsula, ketchikan gateway, kodiak island, kusilvak, lake and peninsula, matanuska-susitna, nome, north slope, northwest arctic, petersburg, prince of wales-hyder, sitka, skagway, southeast fairbanks, wrangell city and borough, yakutat, yukon-koyukuk"],
+["Community Food Bank of Central Alabama","107 Walter Davis Drive","Birmingham","AL","35209","205.942.8911","feedingal.org","community-food-bank-of-central-alabama","blount, calhoun, cherokee, clay, cleburne, etowah, jefferson, st. clair, shelby, talladega, walker, winston"],
+["Food Bank of North Alabama","225 Finney Drive SW","Huntsville","AL","35824","256.539.2256","foodbanknorthal.org","food-bank-of-north-alabama","colbert, cullman, dekalb, franklin, jackson, lauderdale, lawrence, limestone, madison, marshall, morgan"],
+["Heart of Alabama Food Bank","521 Trade Center Street","Montgomery","AL","36108","334.263.3784","hafb.org","heart-of-alabama-food-bank","autauga, barbour, bibb, bullock, butler, chambers, chilton, coffee, coosa, crenshaw, dale, dallas, elmore, fayette, geneva, greene, hale, henry, houston, lamar, lee, lowndes, macon, marengo, marion, montgomery, perry, pickens, pike, randolph, sumter, tallapoosa, tuscaloosa, wilcox"],
+["Feeding the Gulf Coast","5248 Mobile South Street","Theodore","AL","36582","251.653.1617","feedingthegulfcoast.org","feeding-the-gulf-coast","baldwin, choctaw, clarke, conecuh, covington, escambia, mobile, monroe, washington, bay, escambia, holmes, okaloosa, santa rosa, walton, george, greene, hancock, harrison, jackson, pearl river, perry, stone"],
+["River Valley Regional Food Bank","1617 South Zero Street","Ft. Smith","AR","72901","479.785.0582","rvrfoodbank.org","river-valley-regional-food-bank","crawford, franklin, johnson, logan, polk, scott, sebastian, yell"],
+["Food Bank of Northeast Arkansas","3414 One Place","Jonesboro","AR","72404","870.932.3663","foodbankofnea.org","food-bank-of-northeast-arkansas","baxter, boone, clay, craighead, cross, fulton, greene, izard, jackson, lawrence, marion, mississippi, newton, poinsett, randolph, st. francis, searcy, sharp, stone, woodruff"],
+["Arkansas Foodbank","4301 W 65th St","Little Rock","AR","72209","501.565.8121","arkansasfoodbank.org","arkansas-foodbank","arkansas, ashley, bradley, calhoun, chicot, clark, cleburne, cleveland, conway, dallas, desha, drew, faulkner, garland, grant, hot spring, independence, jefferson, lee, lincoln, lonoke, monroe, montgomery, ouachita, perry, phillips, pope, prairie, pulaski, saline, union, van buren, white"],
+["Northwest Arkansas Food Bank","1604 Honeysuckle Street","Lowell","AR","72745","479.872.8774","nwafoodbank.org","northwest-arkansas-food-bank","benton, carroll, madison, washington"],
+["Harvest Regional Food Bank Inc.","3120 East 19th Street","Texarkana","AR","71854","870.774.1398","harvestregionalfoodbank.org","harvest-regional-food-bank","columbia, hempstead, howard, lafayette, little river, miller, nevada, pike, sevier, bowie"],
+["United Food Bank","245 South Nina Drive","Mesa","AZ","85210","480.926.4897","unitedfoodbank.org","united-food-bank","apache, gila, maricopa, navajo, pinal"],
+["St. Marys Food Bank","2831 N. 31st Avenue","Phoenix","AZ","85009","602.242.3663","stmarysfoodbank.org","st-marys-food-bank","apache, coconino, maricopa, mohave, navajo, pinal, yavapai"],
+["Community Food Bank of Southern Arizona","3003 South Country Club Road","Tucson","AZ","85713","520.622.0525","communityfoodbank.org","community-food-bank","cochise, graham, greenlee, pima, santa cruz"],
+["Yuma Community Food Bank","2404 E 24th St","Yuma","AZ","85365","928.343.1243","yumafoodbank.org","yuma-community-food-bank","la paz, yuma"],
+["Food Bank of Contra Costa and Solano","4010 Nelson Ave","Concord","CA","94520","925.676.7543","foodbankccs.org","food-bank-of-contra-costa-and-solano","butte, colusa, contra costa, glenn, modoc, napa, sacramento, shasta, sierra, siskiyou, solano, sutter, tehama, trinity, yolo, yuba"],
+["Central California Food Bank","4010 E. Amendola Ave.","Fresno","CA","93725","559.237.2527","ccfoodbank.org","central-california-food-bank","fresno, kern, kings, madera, tulare"],
+["Foodbank of Santa Barbara County","82 Coromar Drive","Goleta","CA","93117","805.967.5741","foodbanksbc.org","foodbank-of-santa-barbara-county","san luis obispo, santa barbara"],
+["FIND Food Bank","83775 Citrus Ave","Indio","CA","92201","760.775.3663","findfoodbank.org","find-food-bank","imperial, riverside, san bernardino"],
+["Second Harvest Food Bank of Orange County","8014 Marine Way","Irvine","CA","92618","949.653.2900","feedoc.org","second-harvest-food-bank-of-orange-county","orange"],
+["Los Angeles Regional Food Bank","1734 E. 41st Street","Los Angeles","CA","90058","323.234.3030","lafoodbank.org","los-angeles-regional-food-bank","los angeles"],
+["Second Harvest of the Greater Valley","1220 Vanderbilt Cir","Manteca","CA","95337","209.239.2091","localfoodbank.org","second-harvest-of-the-greater-valley","amador, calaveras, mariposa, merced, san joaquin, stanislaus, tuolumne"],
+["Alameda County Community Food Bank","7900 Edgewater Drive","Oakland","CA","94621","510.635.3663","accfb.org","alameda-county-community-food-bank","alameda"],
+["Food Share Inc.","4156 Southbank Road","Oxnard","CA","93036","805.983.7100","foodshare.com","food-share","ventura"],
+["Feeding America Riverside | San Bernardino Counties","2950-A Jefferson Street","Riverside","CA","92504","951.359.4757","feedingamericaie.org","feeding-america-riverside-san-bernardino","riverside, san bernardino"],
+["Feeding the Foothills","8284 Industrial Ave","Roseville","CA","95678","916.783.0481","feedingthefoothills.org","feeding-the-foothills","el dorado, nevada, placer"],
+["Food Bank for Monterey County","353 W Rossi St.","Salinas","CA","93907","831.758.1523","foodbankformontereycounty.org","food-bank-for-monterey-county","monterey"],
+["Feeding San Diego","9477 Waples Street Suite 100","San Diego","CA","92121","858.452.3663","feedingsandiego.org","feeding-san-diego","san diego"],
+["SF-Marin Food Bank","900 Pennsylvania Avenue","San Francisco","CA","94107","415.282.1900","sfmfoodbank.org","san-francisco-marin-food-bank","marin, san francisco"],
+["Second Harvest of Silicon Valley","750 Curtner Avenue","San Jose","CA","95125","408.266.8866","shfb.org","second-harvest-of-silicon-valley","san mateo, santa clara"],
+["Redwood Empire Food Bank","3990 Brickway Blvd","Santa Rosa","CA","95403","707.523.7900","refb.org","redwood-empire-food-bank","del norte, humboldt, lake, mendocino, sonoma"],
+["Second Harvest Food Bank Santa Cruz County","800 Ohlone Parkway","Watsonville","CA","95076","831.722.7110","thefoodbank.org","second-harvest-food-bank-santa-cruz","san benito, santa cruz"],
+["Food Bank of the Rockies","20600 East 38th Avenue","Aurora","CO","80011","303.371.9250","foodbankrockies.org","food-bank-of-the-rockies","adams, arapahoe, clear creek, delta, denver, douglas, eagle, elbert, garfield, gilpin, grand, jackson, jefferson, kit carson, lake, lincoln, logan, mesa, moffat, montrose, morgan, ouray, park, phillips, pitkin, rio blanco, routt, san miguel, sedgwick, summit, washington, yuma"],
+["Care and Share Food Bank","2605 Preamble Point","Colorado Springs","CO","80915","719.528.1247","careandshare.org","care-and-share-food-bank","alamosa, archuleta, baca, bent, chaffee, cheyenne, conejos, costilla, crowley, custer, dolores, el paso, fremont, gunnison, hinsdale, huerfano, kiowa, la plata, las animas, lincoln, mineral, montezuma, otero, prowers, pueblo, rio grande, saguache, san juan, teller"],
+["Weld Food Bank","1108 H Street","Greeley","CO","80631","970.356.2199","weldfoodbank.org","weld-food-bank","weld"],
+["Community Food Share","650 S. Taylor Ave.","Louisville","CO","80027","303.652.3663","communityfoodshare.org","community-food-share","boulder, broomfield"],
+["Food Bank for Larimer County","5706 Wright Drive","Loveland","CO","80538","970.493.4477","foodbanklarimer.org","food-bank-for-larimer-county","larimer"],
+["Connecticut Foodshare","2 Research Parkway","Wallingford","CT","06492","203.469.5000","ctfoodshare.org","connecticut-foodshare","capitol, greater bridgeport, lower connecticut river valley, naugatuck valley, northeastern connecticut, northwest hills, south central connecticut, southeastern connecticut, western connecticut"],
+["Capital Area Food Bank","4900 Puerto Rico Ave NE","Washington","DC","20017","202.644.9800","capitalareafoodbank.org","capital-area-food-bank","district of columbia, montgomery, prince george's, arlington, fairfax, prince william"],
+["Food Bank of Delaware","222 Lake Drive","Newark","DE","19702","302.292.1305","fbd.org","food-bank-of-delaware","kent, new castle, sussex"],
+["Harry Chapin Food Bank of Southwest Florida","3760 Fowler St.","Ft. Myers","FL","33901","239.334.7007","harrychapinfoodbank.org","harry-chapin-food-bank","charlotte, collier, glades, hendry, lee"],
+["Treasure Coast Food Bank","401 Angle Rd.","Ft. Pierce","FL","34947","772.489.3034","stophunger.org","treasure-coast-food-bank","indian river, martin, okeechobee, st. lucie"],
+["Feeding Northeast Florida","5245 Old Kings Road","Jacksonville","FL","32254","904.513.1333","feedingnefl.org","feeding-northeast-florida","alachua, baker, bradford, clay, duval, flagler, gilchrist, levy, nassau, putnam, st. johns, union"],
+["Second Harvest Food Bank of Central Florida Inc.","411 Mercy Drive","Orlando","FL","32805","407.514.1035","feedhopenow.org","second-harvest-food-bank-of-central-florida","brevard, lake, marion, orange, osceola, seminole, volusia"],
+["Feeding South Florida","2501 SW 32 Terrace","Pembroke Park","FL","33023","954.518.1818","feedingsouthflorida.org","feeding-south-florida","broward, miami-dade, monroe, palm beach"],
+["All Faiths Food Bank","8171 Blaikie Ct.","Sarasota","FL","34240","941.379.6333","allfaithsfoodbank.org","all-faiths-food-bank","de soto, sarasota"],
+["Second Harvest of the Big Bend","4446 Entrepot Blvd","Tallahassee","FL","32310","850.562.3033","fightinghunger.org","second-harvest-of-the-big-bend","calhoun, columbia, dixie, franklin, gadsden, gulf, hamilton, jackson, jefferson, lafayette, leon, liberty, madison, suwannee, taylor, wakulla"],
+["Feeding Tampa Bay","3624 Causeway Blvd","Tampa","FL","33619","813.254.1190","feedingtampabay.org","feeding-tampa-bay","citrus, hardee, hernando, highlands, hillsborough, manatee, pasco, pinellas, polk, sumter"],
+["Food Bank of Northeast Georgia","890 Newton Bridge Road","Athens","GA","30607","706.354.8191","foodbanknega.org","food-bank-of-northeast-georgia","banks, barrow, clarke, franklin, habersham, hart, jackson, madison, oconee, oglethorpe, rabun, stephens, towns, white"],
+["Atlanta Community Food Bank","3400 N Desert Dr","Atlanta","GA","30344","404.892.9822","acfb.org","atlanta-community-food-bank","bartow, butts, carroll, cherokee, clayton, cobb, coweta, dawson, dekalb, douglas, fayette, floyd, forsyth, fulton, gwinnett, hall, haralson, heard, henry, lumpkin, morgan, newton, paulding, pickens, polk, rockdale, spalding, union, walton"],
+["Golden Harvest Food Bank","3310 Commerce Drive","Augusta","GA","30909","706.736.1199","goldenharvest.org","golden-harvest-food-bank","burke, columbia, elbert, emanuel, glascock, greene, hancock, jefferson, jenkins, johnson, lincoln, mc duffie, putnam, richmond, screven, taliaferro, warren, washington, wilkes"],
+["Middle Georgia Community Food Bank","4490 Ocmulgee East Boulevard","Macon","GA","31217","478.742.3958","mgcfb.org","middle-georgia-community-food-bank","baldwin, bibb, bleckley, crawford, dodge, dooly, houston, jasper, jones, lamar, laurens, macon, monroe, peach, pike, pulaski, taylor, telfair, treutlen, twiggs, upson, wheeler, wilcox, wilkinson"],
+["Feeding the Valley Food Bank","6744 Flat Rock Road","Midland","GA","31820","706.561.4755","feedingthevalley.org","feeding-the-valley","calhoun, chattahoochee, clay, dougherty, harris, lee, marion, meriwether, muscogee, quitman, randolph, schley, stewart, talbot, terrell, troup, webster"],
+["Second Harvest of Coastal Georgia","1380 Chatham Parkway","Savannah","GA","31405","912.236.6750","helpendhunger.org","second-harvest-of-coastal-georgia","appling, bacon, brantley, bryan, bulloch, camden, candler, charlton, chatham, effingham, evans, glynn, jeff davis, liberty, long, mc intosh, montgomery, pierce, tattnall, toombs, wayne"],
+["Second Harvest of South Georgia","1836 Piedmont Place","Valdosta","GA","31601","229.244.2678","feedingsga.org","second-harvest-of-south-georgia","atkinson, baker, ben hill, berrien, brooks, clinch, coffee, colquitt, cook, crisp, decatur, early, echols, grady, irwin, lanier, lowndes, miller, mitchell, seminole, sumter, thomas, tift, turner, ware, worth"],
+["Hawaii Foodbank Inc.","2611 Kilihau St","Honolulu","HI","96819","808.836.3600","hawaiifoodbank.org","hawaii-foodbank","hawaii, honolulu, kalawao, kauai, maui"],
+["River Bend Food Bank","4010 Kimmel Drive","Davenport","IA","52802","563.345.6490","riverbendfoodbank.org","river-bend-foodbank","bureau, carroll, fulton, hancock, henderson, henry, jo daviess, knox, la salle, lee, mc donough, marshall, mercer, putnam, rock island, stark, warren, whiteside, clinton, dubuque, jackson, muscatine, scott"],
+["Food Bank of Iowa","2220 E. 17th Street","Des Moines","IA","50316","515.564.0330","foodbankiowa.org","food-bank-of-iowa","adair, adams, appanoose, audubon, boone, buena vista, calhoun, carroll, cerro gordo, clarke, clay, dallas, davis, decatur, des moines, dickinson, emmet, franklin, greene, guthrie, hamilton, hancock, hardin, henry, humboldt, jasper, jefferson, keokuk, kossuth, lee, louisa, lucas, madison, mahaska, marion, marshall, monroe, o'brien, osceola, palo alto, pocahontas, polk, ringgold, sac, story, taylor, union, van buren, wapello, warren, wayne, webster, winnebago, worth, wright"],
+["HACAP Food Reservoir","1515 Hawkeye Drive","Hiawatha","IA","52233","319.393.7811","hacap.org","hacap-food-reservoir","benton, cedar, iowa, johnson, jones, linn, washington"],
+["Northeast Iowa Food Bank","1605 Lafayette Street","Waterloo","IA","50703","319.235.0507","neifb.org","northeast-iowa-food-bank","allamakee, black hawk, bremer, buchanan, butler, chickasaw, clayton, delaware, fayette, floyd, grundy, howard, mitchell, poweshiek, tama, winneshiek"],
+["The Idaho Foodbank","3630 E Commercial Ct","Meridian","ID","83642","208.336.9643","idahofoodbank.org","idaho-foodbank","ada, adams, bannock, bear lake, bingham, blaine, boise, bonneville, butte, camas, canyon, caribou, cassia, clark, clearwater, custer, elmore, franklin, fremont, gem, gooding, idaho, jefferson, jerome, latah, lemhi, lewis, lincoln, madison, minidoka, nez perce, oneida, owyhee, payette, power, teton, twin falls, valley, washington"],
+["Greater Chicago Food Depository","4100 West Ann Lurie Place","Chicago","IL","60632","773.247.3663","chicagosfoodbank.org","greater-chicago-food-depository","cook"],
+["Northern Illinois Food Bank","273 Dearborn Court","Geneva","IL","60134","630.443.6910","solvehungertoday.org","northern-illinois-food-bank","boone, dekalb, du page, grundy, kane, kankakee, kendall, lake, mc henry, ogle, stephenson, will, winnebago"],
+["Central Illinois Foodbank","1937 E. Cook St.","Springfield","IL","62703","217.522.4022","centralilfoodbank.org","central-illinois-foodbank","adams, bond, brown, cass, christian, effingham, fayette, greene, jefferson, logan, macon, macoupin, marion, menard, montgomery, morgan, pike, sangamon, schuyler, scott, shelby"],
+["Eastern Illinois Foodbank","2405 North Shore Drive","Urbana","IL","61802","217.328.3663","eifoodbank.org","eastern-illinois-foodbank","champaign, clark, clay, coles, crawford, cumberland, de witt, douglas, edgar, ford, iroquois, jasper, livingston, mc lean, mason, moultrie, peoria, piatt, tazewell, vermilion, woodford"],
+["Hoosier Hills Food Bank","2333 West Industrial Park Drive","Bloomington","IN","47404","812.334.8374","hhfoodbank.org","hoosier-hills-food-bank","brown, lawrence, martin, monroe, orange, owen"],
+["Tri-State Food Bank Inc.","2504 Lynch Road","Evansville","IN","47711","812.425.0775","tristatefoodbank.org","tri-state-food-bank","daviess, dubois, gibson, perry, pike, posey, spencer, vanderburgh, warrick"],
+["Community Harvest Food Bank of Northeast Indiana Inc.","999 East Tillman Road","Fort Wayne","IN","46816","260.447.3696","communityharvest.org","community-harvest-food-bank","adams, allen, dekalb, huntington, lagrange, noble, steuben, wells, whitley"],
+["Gleaners Food Bank of Indiana Inc.","3737 Waldemere Ave.","Indianapolis","IN","46241","317.925.0191","gleaners.org","gleaners-food-bank-of-indiana","bartholomew, boone, decatur, fayette, franklin, hamilton, hancock, hendricks, jackson, jefferson, jennings, johnson, marion, morgan, putnam, ripley, rush, scott, shelby, union, wayne"],
+["Food Finders Food Bank","1204 Greenbush Street","Lafayette","IN","47904","765.471.0062","food-finders.org","food-finders-food-bank","benton, carroll, cass, clinton, fountain, fulton, howard, jasper, miami, montgomery, newton, pulaski, tippecanoe, tipton, warren, white"],
+["Food Bank of Northwest Indiana","6490 Broadway","Merrillville","IN","46410","219.980.1777","foodbanknwi.org","food-bank-of-northwest-indiana","lake, porter"],
+["Second Harvest Food Bank of East Central Indiana","6621 N. Old SR 3","Muncie","IN","47303","765.287.8698","curehunger.org","second-harvest-food-bank-east-central-indiana","blackford, delaware, grant, henry, jay, madison, randolph, wabash"],
+["Food Bank of Northern Indiana","702 Chapin Street","South Bend","IN","46601","574.232.9986","feedindiana.org","food-bank-of-northern-indiana","elkhart, kosciusko, la porte, marshall, st. joseph, starke"],
+["Terre Haute Catholic Charities Foodbank","430 N 14th 1/2 St","Terre Haute","IN","47807","812.232.1447","ccthin.org","terre-haute-catholic-charities-foodbank","clay, greene, knox, parke, sullivan, vermillion, vigo"],
+["Kansas Food Bank","1919 E. Douglas","Wichita","KS","67211","316.265.3663","kansasfoodbank.org","kansas-food-bank","allen, anderson, barber, barton, bourbon, butler, chase, chautauqua, cherokee, cheyenne, clark, cloud, coffey, comanche, cowley, crawford, decatur, dickinson, edwards, elk, ellis, ellsworth, finney, ford, geary, gove, graham, grant, gray, greeley, greenwood, hamilton, harper, harvey, haskell, hodgeman, jewell, kearny, kingman, kiowa, labette, lane, lincoln, linn, logan, lyon, mc pherson, marion, meade, mitchell, montgomery, morris, morton, neosho, ness, norton, osborne, ottawa, pawnee, phillips, pratt, rawlins, reno, republic, rice, rooks, rush, russell, saline, scott, sedgwick, seward, sheridan, sherman, smith, stafford, stanton, stevens, sumner, thomas, trego, wallace, wichita, wilson, woodson"],
+["Feeding America Kentucky's Heartland","313 Peterson Dr.","Elizabethtown","KY","42701","270.769.6997","feedingamericaky.org","feeding-americas-kentuckys-heartland","adair, allen, ballard, barren, breckinridge, butler, caldwell, calloway, carlisle, casey, christian, clinton, cumberland, edmonson, fulton, graves, grayson, green, hancock, hardin, hart, hickman, larue, logan, lyon, mc cracken, marion, marshall, meade, metcalfe, monroe, muhlenberg, nelson, ohio, russell, simpson, taylor, todd, trigg, warren, washington, wayne"],
+["God's Pantry Food Bank Inc.","2201 Innovation Drive","Lexington","KY","40511","859.255.6592","godspantry.org","gods-pantry-food-bank","anderson, bath, bell, bourbon, boyle, breathitt, carter, clark, clay, elliott, estill, fayette, fleming, floyd, franklin, garrard, harlan, harrison, jackson, jessamine, johnson, knott, knox, laurel, lee, leslie, letcher, lewis, lincoln, mc creary, madison, magoffin, martin, menifee, mercer, montgomery, morgan, nicholas, owsley, perry, pike, powell, pulaski, robertson, rockcastle, rowan, scott, whitley, wolfe, woodford"],
+["Dare to Care Food Bank","5803 Fern Valley Road","Louisville","KY","40228","502.966.3821","daretocare.org","dare-to-care-food-bank","bullitt, carroll, henry, jefferson, oldham, shelby, spencer, trimble"],
+["Food Bank of Central Louisiana","3223 Baldwin Avenue","Alexandria","LA","71301","318.445.2773","fbcenla.org","food-bank-of-central-louisiana","allen, avoyelles, catahoula, concordia, grant, la salle, natchitoches, rapides, sabine, vernon, winn"],
+["Greater Baton Rouge Food Bank","10600 S. Choctaw Drive","Baton Rouge","LA","70815","225.359.9940","brfoodbank.org","greater-baton-rouge-food-bank","ascension, assumption, east baton rouge, east feliciana, iberville, livingston, pointe coupee, st. helena, st. james, west baton rouge, west feliciana"],
+["Food Bank of Northeast Louisiana","4600 Central Ave","Monroe","LA","71203","318.322.3567","foodbanknela.org","food-bank-of-northeast-louisiana","caldwell, east carroll, franklin, jackson, lincoln, madison, morehouse, ouachita, richland, tensas, union, west carroll"],
+["Second Harvest Food Bank of Greater New Orleans and Acadiana","700 Edwards Avenue","New Orleans","LA","70123","504.734.1322","no-hunger.org","second-harvest-food-bank","acadia, beauregard, calcasieu, cameron, evangeline, iberia, jefferson, jefferson davis, lafayette, lafourche, orleans, plaquemines, st. bernard, st. charles, st. john the baptist, st. landry, st. martin, st. mary, st. tammany, tangipahoa, terrebonne, vermilion, washington"],
+["Food Bank of Northwest Louisiana","285 Mt. Zion Road","Shreveport","LA","71106","318.675.2400","foodbanknla.org","food-bank-of-northwest-louisiana","bienville, bossier, caddo, claiborne, de soto, red river, webster"],
+["The Greater Boston Food Bank","70 South Bay Ave","Boston","MA","02118","617.427.5200","gbfb.org","greater-boston-food-bank","barnstable, bristol, dukes, essex, middlesex, nantucket, norfolk, plymouth, suffolk"],
+["Food Bank of Western Massachusetts","25 Carew Street","Chicopee","MA","01020","413.247.9738","foodbankwma.org","food-bank-of-western-massachusetts","berkshire, franklin, hampden, hampshire"],
+["Worcester County Food Bank","474 Boston Turnpike","Shrewsbury","MA","01545","508.842.3663","foodbank.org","worcester-county-food-bank","worcester"],
+["Maryland Food Bank","2200 Halethorpe Farms Road","Baltimore","MD","21227","410.737.8282","mdfoodbank.org","maryland-food-bank","allegany, anne arundel, baltimore, calvert, caroline, carroll, cecil, charles, dorchester, frederick, garrett, harford, howard, kent, queen anne's, st. mary's, somerset, talbot, washington, wicomico, worcester"],
+["Good Shepherd Food Bank","3121 Hotel Road","Auburn","ME","04211","207.782.3554","gsfb.org","good-shepherd-food-bank","androscoggin, aroostook, cumberland, franklin, hancock, kennebec, knox, lincoln, oxford, penobscot, piscataquis, sagadahoc, somerset, waldo, washington, york"],
+["Food Gatherers","1 Carrot Way","Ann Arbor","MI","48105","734.761.2796","foodgatherers.org","food-gatherers","washtenaw"],
+["Greater Lansing Food Bank","5600 Food Court","Bath","MI","48808","517.853.7800","greaterlansingfoodbank.org","greater-lansing-food-bank","clare, clinton, eaton, gratiot, ingham, isabella, shiawassee"],
+["South Michigan Food Bank","5451 Wayne Road","Battle Creek","MI","49037","269.964.3663","smfoodbank.org","south-michigan-food-bank","barry, branch, calhoun, hillsdale, jackson, kalamazoo, lenawee, st. joseph"],
+["Gleaners Community Food Bank of Southeastern Michigan","2131 Beaufait Street","Detroit","MI","48207","313.923.3535","gcfb.org","gleaners-community-food-bank","livingston, macomb, monroe, oakland, wayne"],
+["Food Bank of Eastern Michigan","2300 Lapeer Road","Flint","MI","48503","810.239.4441","fbem.org","food-bank-of-eastern-michigan","alcona, alpena, arenac, bay, cheboygan, crawford, genesee, gladwin, huron, iosco, lapeer, midland, montmorency, ogemaw, oscoda, otsego, presque isle, roscommon, saginaw, st. clair, sanilac, tuscola"],
+["Feeding America West Michigan","3070 Shaffer Ave SE","Kentwood","MI","49512","616.784.3250","feedwm.org","feeding-america-west-michigan","alger, allegan, antrim, baraga, benzie, berrien, cass, charlevoix, chippewa, delta, dickinson, emmet, gogebic, grand traverse, houghton, ionia, iron, kalkaska, kent, keweenaw, lake, leelanau, luce, mackinac, manistee, marquette, mason, mecosta, menominee, missaukee, montcalm, muskegon, newaygo, oceana, ontonagon, osceola, ottawa, schoolcraft, van buren, wexford"],
+["Forgotten Harvest","15000 W. Eight Mile Rd.","Oak Park","MI","48237","248.967.1500","forgottenharvest.org","forgotten-harvest","macomb, oakland, wayne"],
+["Second Harvest Heartland","7101 Winnetka Avenue N.","Brooklyn Park","MN","55428","651.484.5117","2harvest.org","second-harvest-heartland","anoka, benton, big stone, blue earth, brown, carver, chippewa, chisago, cottonwood, dakota, hennepin, isanti, jackson, kandiyohi, lac qui parle, le sueur, lincoln, lyon, mc leod, martin, meeker, morrison, murray, nicollet, nobles, pine, pipestone, ramsey, redwood, renville, rock, scott, sherburne, sibley, stearns, swift, todd, washington, watonwan, wright, yellow medicine"],
+["Second Harvest Northland","2302 Commonwealth Avenue","Duluth","MN","55808","218.727.5653","secondharvestnorthland.org","second-harvest-northland","aitkin, carlton, cass, cook, crow wing, itasca, kanabec, koochiching, lake, mille lacs, st. louis"],
+["North Country Food Bank Inc.","1011 11th Ave. NE","East Grand Forks","MN","56721","218.399.7356","northcountryfoodbank.org","north-country-food-bank","becker, beltrami, clearwater, douglas, grant, hubbard, kittson, lake of the woods, mahnomen, marshall, norman, otter tail, pennington, polk, pope, red lake, roseau, stevens, traverse, wadena, wilkin"],
+["Channel One Regional Food Bank","131 35th Street SE","Rochester","MN","55904","507.287.2350","helpingfeedpeople.org","channel-one-regional-food-bank","dodge, faribault, fillmore, freeborn, goodhue, houston, mower, olmsted, rice, steele, wabasha, waseca, winona"],
+["St. Louis Area Foodbank","70 Corporate Woods Drive","Bridgeton","MO","63044","314.292.6262","stlfoodbank.org","st-louis-area-foodbank","crawford, franklin, gasconade, iron, jefferson, lincoln, montgomery, pike, st. charles, st. francois, st. louis, warren, washington"],
+["The Food Bank for Central & Northeast Missouri","2101 Vandiver Drive Suite B","Columbia","MO","65202","573.474.1020","sharefoodbringhope.org","food-bank-for-central-and-northeast-missouri","adair, audrain, benton, boone, callaway, camden, chariton, clark, cole, cooper, howard, knox, lewis, linn, macon, maries, marion, miller, moniteau, monroe, morgan, osage, pettis, phelps, putnam, ralls, randolph, saline, schuyler, scotland, shelby, sullivan"],
+["Harvesters - The Community Food Network","3801 Topping Avenue","Kansas City","MO","64129","816.929.3000","harvesters.org","harvesters","bates, carroll, cass, clay, henry, jackson, johnson, lafayette, platte, ray"],
+["Southeast Missouri Food Bank","600 State Highway H","Sikeston","MO","63801","573.471.1818","semofoodbank.org","southeast-missouri-food-bank","bollinger, butler, cape girardeau, carter, dunklin, madison, mississippi, new madrid, pemiscot, perry, reynolds, ripley, sainte genevieve, scott, stoddard, wayne"],
+["Ozarks Food Harvest","2810 N. Cedarbrook Ave","Springfield","MO","65803","417.865.3411","ozarksfoodharvest.org","ozarks-food-harvest","barry, barton, cedar, christian, dade, dallas, dent, douglas, greene, hickory, howell, jasper, laclede, lawrence, mc donald, newton, oregon, ozark, polk, pulaski, st. clair, shannon, stone, taney, texas, vernon, webster, wright"],
+["Second Harvest Community Food Bank","915 Douglas","St. Joseph","MO","64505","816.364.3663","shcfb.org","second-harvest-community-food-bank","andrew, atchison, buchanan, caldwell, clinton, daviess, dekalb, gentry, grundy, harrison, holt, livingston, mercer, nodaway, worth"],
+["Mississippi Food Network","440 W. Beatty Street","Jackson","MS","39201","601.353.7286","msfoodnet.org","mississippi-food-network","adams, amite, attala, bolivar, calhoun, carroll, chickasaw, choctaw, claiborne, clarke, clay, copiah, covington, forrest, franklin, grenada, hinds, holmes, humphreys, issaquena, jasper, jefferson, jefferson davis, jones, kemper, lamar, lauderdale, lawrence, leake, leflore, lincoln, lowndes, madison, marion, montgomery, neshoba, newton, noxubee, oktibbeha, pike, rankin, scott, sharkey, simpson, smith, sunflower, tallahatchie, walthall, warren, washington, wayne, webster, wilkinson, winston, yalobusha, yazoo"],
+["Montana Food Bank Network","5780 Alloy North","Missoula","MT","59808","406.721.3825","mfbn.org","montana-foodbank-network","beaverhead, big horn, blaine, broadwater, carbon, carter, cascade, chouteau, custer, daniels, dawson, deer lodge, fallon, fergus, flathead, gallatin, garfield, glacier, golden valley, granite, hill, jefferson, judith basin, lake, lewis and clark, liberty, lincoln, mc cone, madison, meagher, mineral, missoula, musselshell, park, petroleum, phillips, pondera, powder river, powell, prairie, ravalli, richland, roosevelt, rosebud, sanders, sheridan, silver bow, stillwater, sweet grass, teton, toole, treasure, valley, wheatland, wibaux, yellowstone"],
+["Second Harvest Food Bank of Metrolina","500 B Spratt St.","Charlotte","NC","28206","704.376.1785","secondharvestmetrolina.org","second-harvest-food-bank-of-metrolina","anson, burke, cabarrus, catawba, cleveland, gaston, iredell, lincoln, mecklenburg, montgomery, rowan, rutherford, stanly, union"],
+["Food Bank of the Albemarle","109 Tidewater Way","Elizabeth City","NC","27909","252.335.4035","afoodbank.org","food-bank-of-the-albemarle","beaufort, bertie, camden, chowan, currituck, dare, gates, hertford, hyde, martin, northampton, pasquotank, perquimans, tyrrell, washington"],
+["Second Harvest Food Bank of Southeast North Carolina","406 Deep Creek Road","Fayetteville","NC","28302","910.485.8809","hungercantwait.org","second-harvest-food-bank-southeast-nc","bladen, cumberland, duplin, harnett, hoke, robeson, sampson"],
+["MANNA FoodBank","99 Broadpointe Dr.","Mills River","NC","28759","828.299.3663","mannafoodbank.org","manna-foodbank","avery, buncombe, cherokee, clay, graham, haywood, henderson, jackson, mc dowell, macon, madison, mitchell, polk, swain, transylvania, yancey"],
+["Food Bank of Central & Eastern North Carolina","1924 Capital Boulevard","Raleigh","NC","27604","919.875.0707","foodbankcenc.org","food-bank-of-central-and-eastern-north-carolina","brunswick, carteret, chatham, columbus, craven, duplin, durham, edgecombe, franklin, granville, greene, halifax, harnett, johnston, jones, lee, lenoir, moore, nash, new hanover, onslow, orange, pamlico, pender, person, pitt, richmond, sampson, scotland, vance, wake, warren, wayne, wilson"],
+["Inter-Faith Food Shuttle","1001 Blair Drive","Raleigh","NC","27603","919.250.0043","foodshuttle.org","inter-faith-food-shuttle","chatham, durham, edgecombe, johnston, nash, orange, wake"],
+["Second Harvest Food Bank of Northwest North Carolina","3330 Shorefair Drive","Winston-Salem","NC","27105","336.784.5770","secondharvestnwnc.org","second-harvest-food-bank-northwest-nc","alamance, alexander, alleghany, ashe, caldwell, caswell, davidson, davie, forsyth, guilford, iredell, randolph, rockingham, stokes, surry, watauga, wilkes, yadkin"],
+["Great Plains Food Bank","1720 3rd Avenue North","Fargo","ND","58102","701.232.6219","greatplainsfoodbank.org","great-plains-foodbank","adams, barnes, benson, billings, bottineau, bowman, burke, burleigh, cass, cavalier, dickey, divide, dunn, eddy, emmons, foster, golden valley, grand forks, grant, griggs, hettinger, kidder, la moure, logan, mc henry, mc intosh, mc kenzie, mc lean, mercer, morton, mountrail, nelson, oliver, pembina, pierce, ramsey, ransom, renville, richland, rolette, sargent, sheridan, sioux, slope, stark, steele, stutsman, towner, traill, walsh, ward, wells, williams"],
+["Food Bank of Lincoln","1221 Kingbird Road","Lincoln","NE","68521","402.466.8170","lincolnfoodbank.org","food-bank-of-lincoln","butler, fillmore, gage, jefferson, johnson, lancaster, nemaha, otoe, pawnee, polk, richardson, saline, saunders, seward, thayer, york"],
+["Food Bank for the Heartland","4645 South 84th Street","Omaha","NE","68127","402.331.1213","foodbankheartland.org","food-bank-of-the-heartland","adams, antelope, arthur, banner, blaine, boone, box butte, boyd, brown, buffalo, burt, cass, cedar, chase, cherry, cheyenne, clay, colfax, cuming, custer, dakota, dawes, dawson, deuel, dixon, dodge, douglas, dundy, franklin, frontier, furnas, garden, garfield, gosper, grant, greeley, hall, hamilton, harlan, hayes, hitchcock, holt, hooker, howard, kearney, keith, keya paha, kimball, knox, lincoln, logan, loup, mc pherson, madison, merrick, morrill, nance, nuckolls, perkins, phelps, pierce, platte, red willow, rock, sarpy, scotts bluff, sheridan, sherman, sioux, stanton, thomas, thurston, valley, washington, wayne, webster, wheeler"],
+["New Hampshire Food Bank","700 East Industrial Park Drive","Manchester","NH","03109","603.669.9725","nhfoodbank.org","new-hampshire-food-bank","belknap, carroll, cheshire, coos, grafton, hillsborough, merrimack, rockingham, strafford, sullivan"],
+["Community Foodbank of New Jersey","31 Evans Terminal","Hillside","NJ","07205","908.355.3663","cfbnj.org","community-foodbank-of-new-jersey","atlantic, bergen, cape may, cumberland, essex, hudson, hunterdon, mercer, middlesex, morris, passaic, somerset, sussex, union, warren"],
+["Fulfill","3300 Route 66","Neptune","NJ","07753","732.918.2600","fulfillnj.org","fulfill-the-foodbank-of-monmouth-and-ocean-counties-inc","monmouth, ocean"],
+["Food Bank of South Jersey","1501 John Tipton Boulevard","Pennsauken","NJ","08110","856.662.4884","foodbanksj.org","south-jersey-food-bank","burlington, camden, gloucester, salem"],
+["Roadrunner Food Bank","5840 Office Blvd NE","Albuquerque","NM","87109","505.247.2052","rrfb.org","roadrunner-food-bank","bernalillo, catron, chaves, cibola, colfax, curry, de baca, dona ana, eddy, grant, guadalupe, harding, hidalgo, lea, lincoln, los alamos, luna, mc kinley, mora, otero, quay, rio arriba, roosevelt, sandoval, san juan, san miguel, santa fe, sierra, socorro, taos, torrance, union, valencia"],
+["Three Square Food Bank","4190 N. Pecos Rd.","Las Vegas","NV","89115","702.644.3663","threesquare.org","three-square","clark, esmeralda, lincoln, nye"],
+["Food Bank of Northern Nevada","550 Italy Dr","Sparks","NV","89437","775.331.3663","fbnn.org","food-bank-of-northern-nevada","churchill, douglas, elko, eureka, humboldt, lander, lyon, mineral, pershing, storey, washoe, white pine"],
+["City Harvest","150 52nd Street","Brooklyn","NY","11232","646.412.0600","cityharvest.org","city-harvest","bronx, kings, new york, queens, richmond"],
+["FeedMore Western New York Inc.","100 James E. Casey Dr.","Buffalo","NY","14206","716.852.1305","feedmorewny.org","feedmore-western-new-york","cattaraugus, chautauqua, erie, niagara"],
+["Food Bank of the Southern Tier","388 Upper Oakwood Avenue","Elmira","NY","14903","607.796.6061","foodbankst.org","food-bank-of-the-southern-tier","broome, chemung, schuyler, steuben, tioga, tompkins"],
+["Feeding Westchester","200 Clearbrook Road","Elmsford","NY","10523","914.923.1100","feedingwestchester.org","feeding-westchester","westchester"],
+["Long Island Cares Inc.","10 Davids Drive","Hauppauge","NY","11788","631.582.3663","licares.org","long-island-cares","nassau, suffolk"],
+["Regional Food Bank of Northeastern New York","965 Albany Shaker Rd.","Latham","NY","12110","518.786.3691","regionalfoodbank.net","regional-food-bank-of-northeastern-new-york","albany, clinton, columbia, delaware, dutchess, essex, franklin, fulton, greene, hamilton, montgomery, orange, otsego, putnam, rensselaer, rockland, saratoga, schenectady, schoharie, sullivan, ulster, warren, washington"],
+["Island Harvest","126 Spagnoli Road","Melville","NY","11747","516.294.8528","islandharvest.org","island-harvest","nassau, suffolk"],
+["Food Bank For New York City","355 Food Center Dr.","New York","NY","10474","718.991.4300","foodbanknyc.org","food-bank-for-new-york-city","bronx, kings, new york, queens, richmond"],
+["Foodlink Inc.","2011 Mt. Read Blvd.","Rochester","NY","14615","585.328.3380","foodlinkny.org","foodlink","allegany, genesee, livingston, monroe, ontario, orleans, seneca, wayne, wyoming, yates"],
+["Food Bank of Central New York","7066 Interstate Island Road","Syracuse","NY","13209","315.437.1899","foodbankcny.org","food-bank-of-central-new-york","cayuga, chenango, cortland, herkimer, jefferson, lewis, madison, oneida, onondaga, oswego, st. lawrence"],
+["Akron-Canton Regional Foodbank","350 Opportunity Parkway","Akron","OH","44307","330.535.6900","akroncantonfoodbank.org","akron-canton-regional-foodbank","carroll, holmes, medina, portage, stark, summit, tuscarawas, wayne"],
+["Freestore Foodbank","3401 Rosenthal Way","Cincinnati","OH","45204","513.482.4500","freestorefoodbank.org","freestore-foodbank","adams, brown, clermont, clinton, hamilton, highland, pike, scioto"],
+["Greater Cleveland Food Bank","13815 Coit Rd.","Cleveland","OH","44110","216.738.2265","greaterclevelandfoodbank.org","greater-cleveland-food-bank","ashland, ashtabula, cuyahoga, geauga, lake, richland"],
+["The Foodbank Inc.","56 Armor Place","Dayton","OH","45417","937.461.0265","thefoodbankdayton.org","the-foodbank-inc","greene, montgomery, preble"],
+["Shared Harvest Foodbank","5901 Dixie Highway","Fairfield","OH","45014","513.874.0114","sharedharvest.org","shared-harvest-foodbank","butler, darke, miami, preble, warren"],
+["Mid-Ohio FoodBank","3960 Brookham Dr.","Grove City","OH","43123","614.277.3663","mofc.org","mid-ohio-foodbank","belmont, coshocton, delaware, fairfield, fayette, franklin, guernsey, harrison, jefferson, knox, licking, madison, marion, monroe, morrow, muskingum, noble, pickaway, ross, union"],
+["West Ohio Food Bank","1380 East Kibby Street","Lima","OH","45804","419.222.7946","wofb.org","west-ohio-food-bank","allen, auglaize, hancock, hardin, mercer, paulding, putnam, seneca, shelby, van wert, wyandot"],
+["SE Ohio Foodbank","1005 CIC Drive","Logan","OH","43138","740.385.6813","hapcap.org","se-ohio-foodbank","athens, gallia, hocking, jackson, meigs, morgan, perry, vinton, washington"],
+["Second Harvest Food Bank of North Central Ohio","5510 Baumhart Rd","Lorain","OH","44053","440.960.2265","secondharvestfoodbank.org","second-harvest-food-bank-north-central-ohio","crawford, erie, huron, lorain"],
+["Second Harvest Food Bank of Clark Champaign & Logan Counties","20 N Murray","Springfield","OH","45503","937.325.8715","theshfb.org","second-harvest-food-bank-clark-champaign-logan","champaign, clark, logan"],
+["Toledo Northwestern Ohio Food Bank","24 East Woodruff Avenue","Toledo","OH","43604","419.242.5000","toledofoodbank.org","toledo-northwestern-ohio-food-bank","defiance, fulton, henry, lucas, ottawa, sandusky, williams, wood"],
+["Second Harvest Food Bank of the Mahoning Valley","2805 Salt Springs Road","Youngstown","OH","44509","330.792.5522","mahoningvalleysecondharvest.org","second-harvest-food-bank-mahoning-valley","columbiana, mahoning, trumbull"],
+["Regional Food Bank of Oklahoma","3355 S. Purdue","Oklahoma City","OK","73179","405.972.1111","regionalfoodbank.org","regional-food-bank-of-oklahoma","alfalfa, atoka, beaver, beckham, blaine, bryan, caddo, canadian, carter, cimarron, cleveland, coal, comanche, cotton, custer, dewey, ellis, garfield, garvin, grady, grant, greer, harmon, harper, hughes, jackson, jefferson, johnston, kay, kingfisher, kiowa, lincoln, logan, love, mc clain, major, marshall, murray, noble, okfuskee, oklahoma, pawnee, payne, pontotoc, pottawatomie, roger mills, seminole, stephens, texas, tillman, washita, woods, woodward"],
+["Food Bank of Eastern Oklahoma","1304 N. Kenosha Ave.","Tulsa","OK","74106","918.585.2800","okfoodbank.org","community-food-bank-of-eastern-oklahoma","adair, cherokee, choctaw, craig, creek, delaware, haskell, latimer, le flore, mc curtain, mc intosh, mayes, muskogee, nowata, okmulgee, osage, ottawa, pittsburg, pushmataha, rogers, sequoyah, tulsa, wagoner, washington"],
+["Oregon Food Bank","7900 NE 33rd Drive","Portland","OR","97211","503.282.0555","oregonfoodbank.org","oregon-food-bank","baker, benton, clackamas, clatsop, columbia, coos, crook, curry, deschutes, douglas, gilliam, grant, harney, hood river, jackson, jefferson, josephine, klamath, lake, lane, lincoln, linn, malheur, marion, morrow, multnomah, polk, sherman, tillamook, umatilla, union, wallowa, wasco, washington, wheeler, yamhill"],
+["Westmoreland Food Bank","100 Devonshire Drive","Delmont","PA","15626","724.468.8660","westmorelandfoodbank.org","westmoreland-food-bank","westmoreland"],
+["Greater Pittsburgh Community Food Bank","1 North Linden Street","Duquesne","PA","15110","412.460.3663","pittsburghfoodbank.org","greater-pittsburgh-community-food-bank","allegheny, armstrong, beaver, butler, cambria, fayette, greene, indiana, lawrence, somerset, washington"],
+["Second Harvest Food Bank of Northwest Pennsylvania","1507 Grimm Drive","Erie","PA","16501","814.459.3663","nwpafoodbank.org","second-harvest-food-bank-northwest-pa","cameron, clarion, clearfield, crawford, elk, erie, forest, jefferson, mc kean, venango, warren"],
+["Central Pennsylvania Food Bank","3908 Corey Road","Harrisburg","PA","17109","717.564.1700","centralpafoodbank.org","central-pennsylvania-food-bank","adams, bedford, blair, bradford, centre, clearfield, clinton, columbia, cumberland, dauphin, franklin, fulton, huntingdon, juniata, lancaster, lebanon, lycoming, mifflin, montour, northumberland, perry, potter, snyder, sullivan, tioga, union, york"],
+["Second Harvest Food Bank of Lehigh Valley and NE Pennsylvania","6969 Silver Crest Road","Nazareth","PA","18064","484.287.4015","shfblv.org","second-harvest-food-bank-of-lehigh-valley-and-northeast-pennsylvania","carbon, lehigh, monroe, northampton, pike, wayne"],
+["Philabundance","3616 S. Galloway Street","Philadelphia","PA","19148","215.339.0900","philabundance.org","philabundance","bucks, chester, delaware, montgomery, philadelphia"],
+["CEO Weinberg Northeast Regional Foodbank","185 Research Drive","Pittston","PA","18640","570.826.0510","ceopeoplehelpingpeople.org","ceo-weinberg-northeast-regional-foodbank","lackawanna, luzerne, susquehanna, wyoming"],
+["Helping Harvest","117 Morgan Drive","Reading","PA","19608","610.926.5802","helpingharvest.org","helping-harvest","berks, schuylkill"],
+["Mercer County Food Bank","109 S Sharpsville Avenue Suite A","Sharon","PA","16146","724.981.0353","mercercountyfoodbank.org","mercer-county-food-bank","mercer"],
+["Banco de Alimentos de Puerto Rico","Country Club Park C/272 IC4","Carolina","PR","00984","787.740.3663","alimentospr.org","banco-de-alimentos-de-puerto-rico","puerto rico"],
+["Rhode Island Community Food Bank","200 Niantic Ave.","Providence","RI","02907","401.942.6325","rifoodbank.org","rhode-island-community-food-bank","bristol, kent, newport, providence, washington"],
+["Lowcountry Food Bank","2864 Azalea Drive","Charleston","SC","29405","843.747.8146","lowcountryfoodbank.org","lowcountry-food-bank","beaufort, berkeley, charleston, colleton, dorchester, georgetown, hampton, horry, jasper, williamsburg"],
+["Harvest Hope Food Bank","2220 Shop Road","Columbia","SC","29201","803.254.4432","harvesthope.org","harvest-hope-food-bank","calhoun, chester, chesterfield, clarendon, darlington, dillon, fairfield, florence, greenville, kershaw, laurens, lee, lexington, marion, marlboro, newberry, orangeburg, richland, saluda, sumter"],
+["Feeding South Dakota","4701 N Westport Ave","Sioux Falls","SD","57107","605.335.0364","feedingsouthdakota.org","feeding-south-dakota","aurora, beadle, bennett, bon homme, brookings, brown, brule, buffalo, butte, campbell, charles mix, clark, clay, codington, corson, custer, davison, day, deuel, dewey, douglas, edmunds, fall river, faulk, grant, gregory, haakon, hamlin, hand, hanson, harding, hughes, hutchinson, hyde, jackson, jerauld, jones, kingsbury, lake, lawrence, lincoln, lyman, mc cook, mc pherson, marshall, meade, mellette, miner, minnehaha, moody, oglala lakota, pennington, perkins, potter, roberts, sanborn, spink, stanley, sully, todd, tripp, turner, union, walworth, yankton, ziebach"],
+["Chattanooga Area Food Bank","2009 Curtain Pole Road","Chattanooga","TN","37406","423.622.1800","chattfoodbank.org","chattanooga-area-food-bank","bledsoe, bradley, grundy, hamilton, mc minn, marion, meigs, polk, rhea, sequatchie, van buren"],
+["Second Harvest Food Bank of Northeast Tennessee","1020 Jericho Drive","Kingsport","TN","37663","423.279.0430","netfoodbank.org","second-harvest-food-bank-of-northeast-tennessee","carter, greene, hancock, hawkins, johnson, sullivan, unicoi, washington"],
+["Second Harvest Food Bank of East Tennessee","136 Harvest Lane","Maryville","TN","37801","865.521.0000","secondharvestetn.org","second-harvest-food-bank-of-east-tennessee","anderson, blount, campbell, claiborne, cocke, cumberland, fentress, grainger, hamblen, jefferson, knox, loudon, monroe, morgan, roane, scott, sevier, union"],
+["Mid-South Food Bank","3865 S Perkins Rd","Memphis","TN","38118","901.527.0841","midsouthfoodbank.org","mid-south-food-bank","crockett, dyer, fayette, hardeman, haywood, lake, lauderdale, mc nairy, madison, obion, shelby, tipton"],
+["Second Harvest Food Bank of Middle Tennessee Inc.","331 Great Circle Road","Nashville","TN","37228","615.329.3491","secondharvestmidtn.org","second-harvest-food-bank-of-middle-tennessee","bedford, benton, cannon, carroll, cheatham, chester, clay, coffee, davidson, decatur, dekalb, dickson, franklin, gibson, giles, hardin, henderson, henry, hickman, houston, humphreys, jackson, lawrence, lewis, lincoln, macon, marshall, maury, montgomery, moore, overton, perry, pickett, putnam, robertson, rutherford, smith, stewart, sumner, trousdale, warren, wayne, weakley, white, williamson, wilson"],
+["Food Bank of West Central Texas","5505 N. First","Abilene","TX","79603","325.695.6311","fbwct.org","food-bank-of-west-central-texas","brown, callahan, coleman, comanche, eastland, fisher, jones, mitchell, nolan, runnels, shackelford, stephens, taylor"],
+["High Plains Food Bank","815 Ross St.","Amarillo","TX","79102","806.374.8562","hpfb.org","high-plains-food-bank","armstrong, briscoe, carson, castro, childress, collingsworth, cottle, dallam, deaf smith, donley, gray, hale, hall, hansford, hardeman, hartley, hemphill, hutchinson, lipscomb, moore, ochiltree, oldham, parmer, potter, randall, roberts, sherman, swisher, wheeler"],
+["Central Texas Food Bank","6500 Metropolis Drive","Austin","TX","78744","512.282.2111","centraltexasfoodbank.org","central-texas-food-bank","bastrop, bell, blanco, burnet, caldwell, coryell, falls, fayette, freestone, gillespie, hays, lampasas, lee, limestone, llano, mc lennan, milam, mills, san saba, travis, williamson"],
+["Southeast Texas Food Bank","3845 S. ML King Jr Pkwy","Beaumont","TX","77705","409.839.8777","setxfoodbank.org","southeast-texas-food-bank","hardin, jasper, jefferson, newton, orange, polk, sabine, tyler"],
+["Coastal Bend Food Bank","5442 Bear Lane","Corpus Christi","TX","78405","361.887.6291","coastalbendfoodbank.org","coastal-bend-food-bank","aransas, bee, brooks, duval, jim wells, kenedy, kleberg, live oak, mc mullen, nueces, san patricio"],
+["El Pasoans Fighting Hunger","9541 Plaza Circle","El Paso","TX","79927","915.298.0353","elpasoansfightinghunger.org","el-paso-food-bank","culberson, el paso, hudspeth"],
+["Tarrant Area Food Bank","2600 Cullen","Ft. Worth","TX","76107","817.857.7100","tafb.org","tarrant-area-food-bank","bosque, cooke, denton, erath, hamilton, hill, hood, johnson, palo pinto, parker, somervell, tarrant, wise"],
+["Houston Food Bank","535 Portwall Street","Houston","TX","77029","713.223.3700","houstonfoodbank.org","houston-food-bank","austin, brazoria, brazos, burleson, chambers, fort bend, galveston, grimes, harris, liberty, madison, montgomery, robertson, san jacinto, trinity, walker, waller, washington"],
+["South Texas Food Bank","2121 Jefferson St.","Laredo","TX","78040","956.726.3120","southtexasfoodbank.org","south-texas-food-bank","dimmit, jim hogg, kinney, maverick, starr, val verde, webb, zapata"],
+["South Plains Food Bank","5605 MLK Boulevard","Lubbock","TX","79404","806.763.3003","spfb.org","south-plains-food-bank","bailey, cochran, crosby, dickens, floyd, gaines, garza, hale, hockley, kent, king, lamb, lubbock, lynn, motley, scurry, stonewall, terry, yoakum"],
+["West Texas Food Bank","411 S. Pagewood Ave.","Odessa","TX","79761","432.580.6333","wtxfoodbank.org","west-texas-food-bank","andrews, borden, brewster, crane, dawson, ector, glasscock, howard, jeff davis, loving, martin, midland, pecos, presidio, reeves, terrell, upton, ward, winkler"],
+["Food Bank of the Rio Grande Valley","724 N. Cage Blvd.","Pharr","TX","78577","956.682.8101","foodbankrgv.com","food-bank-of-the-rio-grande-valley","cameron, hidalgo, willacy"],
+["North Texas Food Bank","3677 Mapleshade Lane","Plano","TX","75075","214.330.1396","ntfb.org","north-texas-food-bank","collin, dallas, delta, ellis, fannin, grayson, hopkins, hunt, kaufman, lamar, navarro, rockwall"],
+["San Antonio Food Bank","5200 Historic Old Hwy 90","San Antonio","TX","78227","210.337.3663","safoodbank.org","san-antonio-food-bank","atascosa, bandera, bexar, coke, comal, concho, crockett, edwards, frio, guadalupe, irion, karnes, kendall, kerr, kimble, la salle, mc culloch, mason, medina, menard, reagan, real, schleicher, sterling, sutton, tom green, uvalde, wilson, zavala"],
+["East Texas Food Bank","3201 Robertson Road","Tyler","TX","75701","903.597.3663","easttexasfoodbank.org","east-texas-food-bank","anderson, angelina, bowie, camp, cass, cherokee, franklin, gregg, harrison, henderson, houston, leon, marion, morris, nacogdoches, panola, rains, red river, rusk, san augustine, shelby, smith, titus, upshur, van zandt, wood"],
+["Food Bank of the Golden Crescent","801 South Laurent","Victoria","TX","77901","361.578.0591","tfbgc.org","food-bank-of-the-golden-crescent","calhoun, colorado, de witt, goliad, gonzales, jackson, lavaca, matagorda, refugio, victoria, wharton"],
+["Wichita Falls Area Food Bank","1230 Midwestern Parkway","Wichita Falls","TX","76307","940.766.2322","wfafb.org","wichita-falls-area-food-bank","archer, baylor, clay, foard, haskell, jack, knox, montague, throckmorton, wichita, wilbarger, young"],
+["Utah Food Bank","3150 South 900 West","Salt Lake City","UT","84119","801.908.8660","utahfoodbank.org","utah-food-bank","beaver, box elder, cache, carbon, daggett, davis, duchesne, emery, garfield, grand, iron, juab, kane, millard, morgan, piute, rich, salt lake, san juan, sanpete, sevier, summit, tooele, uintah, utah, wasatch, washington, wayne, weber"],
+["Fredericksburg Regional Food Bank","3631 Lee Hill Drive","Fredericksburg","VA","22408","540.371.7666","fredfood.org","fredericksburg-area-food-bank","caroline, king george, orange, spotsylvania, stafford"],
+["Virginia Peninsula Foodbank","2401 Aluminum Avenue","Hampton","VA","23661","757.596.7188","hrfoodbank.org","virginia-peninsula-foodbank","gloucester, james city, mathews, surry, york"],
+["Foodbank of Southeastern Virginia and the Eastern Shore","800 Tidewater Drive","Norfolk","VA","23504","757.627.6599","foodbankonline.org","foodbank-of-southeastern-virginia","accomack, isle of wight, northampton, southampton, sussex"],
+["Feed More","8020 Villa Park Drive","Richmond","VA","23228","804.521.2500","feedmore.org","feed-more","amelia, brunswick, charles city, charlotte, chesterfield, cumberland, dinwiddie, essex, goochland, greensville, halifax, hanover, henrico, king and queen, king william, lancaster, louisa, lunenburg, mecklenburg, middlesex, new kent, northumberland, nottoway, powhatan, prince edward, prince george, richmond, sussex, westmoreland"],
+["Feeding Southwest Virginia","1025 Electric Road","Salem","VA","24153","540.342.3011","feedingswva.org","feeding-southwest-virginia","alleghany, bedford, bland, botetourt, buchanan, carroll, craig, dickenson, floyd, franklin, giles, grayson, henry, lee, montgomery, patrick, pittsylvania, pulaski, roanoke, russell, scott, smyth, tazewell, washington, wise, wythe"],
+["Blue Ridge Area Food Bank","96 Laurel Hill Road","Verona","VA","24482","540.248.3663","brafb.org","blue-ridge-area-food-bank","albemarle, amherst, appomattox, augusta, bath, bedford, buckingham, campbell, clarke, culpeper, fauquier, fluvanna, frederick, greene, highland, loudoun, madison, nelson, orange, page, rappahannock, rockbridge, rockingham, shenandoah, warren"],
+["Vermont Foodbank","33 Parker Road","Barre","VT","05641","802.476.3341","vtfoodbank.org","vermont-foodbank","addison, bennington, caledonia, chittenden, essex, franklin, grand isle, lamoille, orange, orleans, rutland, washington, windham, windsor"],
+["Food Lifeline","815 South 96th Street","Seattle","WA","98108","206.545.6600","foodlifeline.org","food-lifeline","clallam, cowlitz, grays harbor, island, jefferson, king, kitsap, lewis, mason, pacific, pierce, san juan, skagit, snohomish, thurston, wahkiakum, whatcom"],
+["Second Harvest Inland Northwest","1234 E. Front Avenue","Spokane","WA","99202","509.534.6678","2-harvest.org","second-harvest","adams, asotin, benton, chelan, columbia, douglas, ferry, franklin, garfield, grant, kittitas, klickitat, lincoln, okanogan, pend oreille, skamania, spokane, stevens, walla walla, whitman, yakima"],
+["Second Harvest Foodbank of Southern Wisconsin","2802 Dairy Drive","Madison","WI","53718","608.223.9121","secondharvestsw.org","second-harvest-foodbank-of-southern-wisconsin","adams, columbia, crawford, dane, dodge, grant, green, iowa, jefferson, juneau, lafayette, monroe, richland, rock, sauk, vernon"],
+["Feeding America Eastern Wisconsin","1700 W. Fond Du Lac Avenue","Milwaukee","WI","53205","414.931.7400","feedingamericawi.org","feeding-america-eastern-wisconsin","brown, calumet, dodge, door, florence, fond du lac, forest, green lake, jefferson, kenosha, kewaunee, langlade, lincoln, manitowoc, marathon, marinette, marquette, menominee, milwaukee, oconto, oneida, outagamie, ozaukee, portage, racine, shawano, sheboygan, vilas, walworth, washington, waukesha, waupaca, waushara, winnebago, wood"],
+["Mountaineer Food Bank","484 Enterprise Drive","Gassaway","WV","26624","304.364.5518","mountaineerfoodbank.org","mountaineer-food-bank","barbour, berkeley, boone, braxton, brooke, calhoun, clay, doddridge, fayette, gilmer, grant, greenbrier, hampshire, hancock, hardy, harrison, jackson, jefferson, kanawha, lewis, mc dowell, marion, marshall, mercer, mineral, monongalia, monroe, morgan, nicholas, ohio, pendleton, pleasants, pocahontas, preston, raleigh, randolph, ritchie, roane, summers, taylor, tucker, tyler, upshur, webster, wetzel, wirt, wood, wyoming"],
+["Facing Hunger Foodbank","1327 Seventh Avenue","Huntington","WV","25701","304.523.6029","facinghunger.org","facing-hunger-foodbank","cabell, lincoln, logan, mason, mingo, putnam, wayne"],
+];
+
+// Build FOOD_BANKS array with IDs and derived links
+const FOOD_BANKS = RAW_BANKS.map((r, i) => ({
+  id: i + 1,
+  name: r[0], addr: r[1], city: r[2], state: r[3], zip: r[4],
+  phone: r[5], website: r[6], slug: r[7], counties: r[8],
+  findFood: `https://www.feedingamerica.org/find-your-local-foodbank/${r[7]}#find-food`,
+  volunteer: `https://www.feedingamerica.org/find-your-local-foodbank/${r[7]}#volunteer`,
+  donate: `https://www.feedingamerica.org/find-your-local-foodbank/${r[7]}#give`,
+  lng: null, lat: null,
+}));
+
+// ──────────────────────────────────────────────
+// STATE FIPS REVERSE LOOKUP (for hover tooltip)
+// ──────────────────────────────────────────────
+const FIPS_TO_STATE = {
+  '01':'AL','02':'AK','04':'AZ','05':'AR','06':'CA','08':'CO','09':'CT',
+  '10':'DE','11':'DC','12':'FL','13':'GA','15':'HI','16':'ID','17':'IL',
+  '18':'IN','19':'IA','20':'KS','21':'KY','22':'LA','23':'ME','24':'MD',
+  '25':'MA','26':'MI','27':'MN','28':'MS','29':'MO','30':'MT','31':'NE',
+  '32':'NV','33':'NH','34':'NJ','35':'NM','36':'NY','37':'NC','38':'ND',
+  '39':'OH','40':'OK','41':'OR','42':'PA','44':'RI','45':'SC','46':'SD',
+  '47':'TN','48':'TX','49':'UT','50':'VT','51':'VA','53':'WA','54':'WV',
+  '55':'WI','56':'WY','72':'PR',
+};
+
+// Reverse lookup: state abbr → 2-digit FIPS prefix
+const STATE_TO_FIPS = Object.fromEntries(Object.entries(FIPS_TO_STATE).map(([k,v]) => [v,k]));
+
+// Food bank logo URLs keyed by slug (from feeding_america_logos_148.csv)
+const BASE = 'https://foodbanklogos.blob.core.windows.net/foodbanklogos/';
+const BANK_LOGOS = {
+  'community-food-bank-of-central-alabama':BASE+'FoodBankLogo_8_275w.jpg',
+  'food-bank-of-north-alabama':BASE+'FoodBankLogo_146_275w.jpg',
+  'heart-of-alabama-food-bank':BASE+'FoodBankLogo_54_275w.jpg',
+  'feeding-the-gulf-coast':BASE+'FoodBankLogo_52_275w.jpg',
+  'river-valley-regional-food-bank':BASE+'FoodBankLogo_138_275w.jpg',
+  'food-bank-of-northeast-arkansas':BASE+'FoodBankLogo_151_275w.jpg',
+  'arkansas-foodbank':BASE+'FoodBankLogo_43_275w.jpg',
+  'northwest-arkansas-food-bank':BASE+'FoodBankLogo_611_275w.jpg',
+  'united-food-bank':BASE+'FoodBankLogo_164_275w.jpg',
+  'st-marys-food-bank':BASE+'FoodBankLogo_319_275w.jpg',
+  'community-food-bank':BASE+'FoodBankLogo_281_275w.jpg',
+  'yuma-community-food-bank':BASE+'FoodBankLogo_603_275w.jpg',
+  'food-bank-of-contra-costa-and-solano':BASE+'FoodBankLogo_22_275w.jpg',
+  'central-california-food-bank':BASE+'FoodBankLogo_281_275w.jpg',
+  'foodbank-of-santa-barbara-county':BASE+'FoodBankLogo_184_275w.jpg',
+  'find-food-bank':BASE+'FoodBankLogo_113_275w.jpg',
+  'second-harvest-food-bank-of-orange-county':BASE+'FoodBankLogo_64_275w.jpg',
+  'los-angeles-regional-food-bank':BASE+'FoodBankLogo_45_275w.jpg',
+  'second-harvest-of-the-greater-valley':BASE+'FoodBankLogo_199_275w.jpg',
+  'alameda-county-community-food-bank':BASE+'FoodBankLogo_169_275w.jpg',
+  'food-bank-for-monterey-county':BASE+'FoodBankLogo_225_275w.jpg',
+  'feeding-san-diego':BASE+'FoodBankLogo_77_275w.jpg',
+  'san-francisco-marin-food-bank':BASE+'FoodBankLogo_79_275w.jpg',
+  'second-harvest-of-silicon-valley':BASE+'FoodBankLogo_79_275w.jpg',
+  'redwood-empire-food-bank':BASE+'FoodBankLogo_185_275w.jpg',
+  'food-bank-of-the-rockies':BASE+'FoodBankLogo_25_275w.jpg',
+  'care-and-share-food-bank':BASE+'FoodBankLogo_19_275w.jpg',
+  'weld-food-bank':BASE+'FoodBankLogo_141_275w.jpg',
+  'community-food-share':BASE+'FoodBankLogo_110_275w.jpg',
+  'food-bank-for-larimer-county':BASE+'FoodBankLogo_137_275w.jpg',
+  'connecticut-foodshare':BASE+'FoodBankLogo_56_275w.jpg',
+  'capital-area-food-bank':BASE+'FoodBankLogo_95_275w.jpg',
+  'food-bank-of-delaware':BASE+'FoodBankLogo_59_275w.jpg',
+  'treasure-coast-food-bank':BASE+'FoodBankLogo_563_275w.jpg',
+  'feeding-northeast-florida':BASE+'FoodBankLogo_370_275w.jpg',
+  'second-harvest-food-bank-of-central-florida':BASE+'FoodBankLogo_65_275w.jpg',
+  'feeding-south-florida':BASE+'FoodBankLogo_50_275w.jpg',
+  'all-faiths-food-bank':BASE+'FoodBankLogo_284_275w.jpg',
+  'feeding-tampa-bay':BASE+'FoodBankLogo_90_275w.jpg',
+  'food-bank-of-northeast-georgia':BASE+'FoodBankLogo_324_275w.jpg',
+  'atlanta-community-food-bank':BASE+'FoodBankLogo_4_275w.jpg',
+  'golden-harvest-food-bank':BASE+'FoodBankLogo_5_275w.jpg',
+  'middle-georgia-community-food-bank':BASE+'FoodBankLogo_159_275w.jpg',
+  'river-bend-foodbank':BASE+'FoodBankLogo_53_275w.jpg',
+  'food-bank-of-iowa':BASE+'FoodBankLogo_26_275w.jpg',
+  'hacap-food-reservoir':BASE+'FoodBankLogo_114_275w.jpg',
+  'northeast-iowa-food-bank':BASE+'FoodBankLogo_206_275w.jpg',
+  'greater-chicago-food-depository':BASE+'FoodBankLogo_16_275w.jpg',
+  'northern-illinois-food-bank':BASE+'FoodBankLogo_112_275w.jpg',
+  'central-illinois-foodbank':BASE+'FoodBankLogo_84_275w.jpg',
+  'eastern-illinois-foodbank':BASE+'FoodBankLogo_201_275w.jpg',
+  'hoosier-hills-food-bank':BASE+'FoodBankLogo_303_275w.jpg',
+  'food-bank-of-northern-indiana':BASE+'FoodBankLogo_278_275w.jpg',
+  'terre-haute-catholic-charities-foodbank':BASE+'FoodBankLogo_196_275w.jpg',
+  'kansas-food-bank':BASE+'FoodBankLogo_208_275w.jpg',
+  'dare-to-care-food-bank':BASE+'FoodBankLogo_46_275w.jpg',
+  'food-bank-of-central-louisiana':BASE+'FoodBankLogo_276_275w.jpg',
+  'greater-baton-rouge-food-bank':BASE+'FoodBankLogo_298_275w.jpg',
+  'food-bank-of-northeast-louisiana':BASE+'FoodBankLogo_339_275w.jpg',
+  'food-bank-of-northwest-louisiana':BASE+'FoodBankLogo_326_275w.jpg',
+  'food-bank-of-western-massachusetts':BASE+'FoodBankLogo_35_275w.jpg',
+  'maryland-food-bank':BASE+'FoodBankLogo_7_275w.jpg',
+  'good-shepherd-food-bank':BASE+'FoodBankLogo_259_275w.jpg',
+  'food-gatherers':BASE+'FoodBankLogo_305_275w.jpg',
+  'greater-lansing-food-bank':BASE+'FoodBankLogo_154_275w.jpg',
+  'south-michigan-food-bank':BASE+'FoodBankLogo_105_275w.jpg',
+  'food-bank-of-eastern-michigan':BASE+'FoodBankLogo_30_275w.jpg',
+  'feeding-america-west-michigan':BASE+'FoodBankLogo_34_275w.jpg',
+  'forgotten-harvest':BASE+'FoodBankLogo_306_275w.jpg',
+  'second-harvest-heartland':BASE+'FoodBankLogo_86_275w.jpg',
+  'second-harvest-northland':BASE+'FoodBankLogo_218_275w.jpg',
+  'st-louis-area-foodbank':BASE+'FoodBankLogo_85_275w.jpg',
+  'southeast-missouri-food-bank':BASE+'FoodBankLogo_187_275w.jpg',
+  'ozarks-food-harvest':BASE+'FoodBankLogo_192_275w.jpg',
+  'second-harvest-community-food-bank':BASE+'FoodBankLogo_193_275w.jpg',
+  'mississippi-food-network':BASE+'FoodBankLogo_149_275w.jpg',
+  'second-harvest-food-bank-of-metrolina':BASE+'FoodBankLogo_14_275w.jpg',
+  'food-bank-of-the-albemarle':BASE+'FoodBankLogo_123_275w.jpg',
+  'manna-foodbank':BASE+'FoodBankLogo_103_275w.jpg',
+  'food-bank-of-central-and-eastern-north-carolina':BASE+'FoodBankLogo_70_275w.jpg',
+  'inter-faith-food-shuttle':BASE+'FoodBankLogo_309_275w.jpg',
+  'food-bank-of-lincoln':BASE+'FoodBankLogo_157_275w.jpg',
+  'new-hampshire-food-bank':BASE+'FoodBankLogo_161_275w.jpg',
+  'community-foodbank-of-new-jersey':BASE+'FoodBankLogo_58_275w.jpg',
+  'fulfill-the-foodbank-of-monmouth-and-ocean-counties-inc':BASE+'FoodBankLogo_310_275w.jpg',
+  'roadrunner-food-bank':BASE+'FoodBankLogo_1_275w.jpg',
+  'food-bank-of-northern-nevada':BASE+'FoodBankLogo_82_275w.jpg',
+  'city-harvest':BASE+'FoodBankLogo_297_275w.jpg',
+  'feedmore-western-new-york':BASE+'FoodBankLogo_11_275w.jpg',
+  'food-bank-of-the-southern-tier':BASE+'FoodBankLogo_28_275w.jpg',
+  'feeding-westchester':BASE+'FoodBankLogo_222_275w.jpg',
+  'regional-food-bank-of-northeastern-new-york':BASE+'FoodBankLogo_42_275w.jpg',
+  'island-harvest':BASE+'FoodBankLogo_311_275w.jpg',
+  'food-bank-for-new-york-city':BASE+'FoodBankLogo_10_275w.jpg',
+  'food-bank-of-central-new-york':BASE+'FoodBankLogo_89_275w.jpg',
+  'akron-canton-regional-foodbank':BASE+'FoodBankLogo_100_275w.jpg',
+  'freestore-foodbank':BASE+'FoodBankLogo_17_275w.jpg',
+  'the-foodbank-inc':BASE+'FoodBankLogo_121_275w.jpg',
+  'shared-harvest-foodbank':BASE+'FoodBankLogo_129_275w.jpg',
+  'mid-ohio-foodbank':BASE+'FoodBankLogo_21_275w.jpg',
+  'west-ohio-food-bank':BASE+'FoodBankLogo_285_275w.jpg',
+  'se-ohio-foodbank':BASE+'FoodBankLogo_167_275w.jpg',
+  'toledo-northwestern-ohio-food-bank':BASE+'FoodBankLogo_197_275w.jpg',
+  'regional-food-bank-of-oklahoma':BASE+'FoodBankLogo_62_275w.jpg',
+  'community-food-bank-of-eastern-oklahoma':BASE+'FoodBankLogo_92_275w.jpg',
+  'oregon-food-bank':BASE+'FoodBankLogo_68_275w.jpg',
+};
+
+// ──────────────────────────────────────────────
+// TRANSLATIONS
+// ──────────────────────────────────────────────
+const T = {
+  en: {
+    title: 'Feeding America — Food Bank Finder',
+    searchPlaceholder: 'Search food banks…',
+    allStates: 'All states',
+    nearMe: 'Near me',
+    healthLayer: 'Health layer',
+    findFood: 'Find Food',
+    volunteer: 'Volunteer',
+    donate: 'Donate',
+    phone: 'Phone',
+    website: 'Website',
+    counties: 'Counties',
+    address: 'Address',
+    locating: 'Geocoding food banks…',
+    loadingMap: 'Loading map…',
+    noResults: 'No food banks match your search.',
+    countiesTitle: 'Service Area',
+    spanish: 'Español',
+    english: 'English',
+  },
+  es: {
+    title: 'Feeding America — Buscador de Bancos de Alimentos',
+    searchPlaceholder: 'Buscar bancos de alimentos…',
+    allStates: 'Todos los estados',
+    nearMe: 'Cerca de mí',
+    healthLayer: 'Capa de salud',
+    findFood: 'Encontrar comida',
+    volunteer: 'Voluntario',
+    donate: 'Donar',
+    phone: 'Teléfono',
+    website: 'Sitio web',
+    counties: 'Condados',
+    address: 'Dirección',
+    locating: 'Ubicando bancos de alimentos…',
+    loadingMap: 'Cargando mapa…',
+    noResults: 'No hay bancos que coincidan con su búsqueda.',
+    countiesTitle: 'Área de servicio',
+    spanish: 'Español',
+    english: 'English',
+  }
+};
+
+
+// ──────────────────────────────────────────────
+// APP STATE
+// ──────────────────────────────────────────────
+const state = {
+  lang: 'en',
+  selectedBank: null,
+  searchQuery: '',
+  stateFilter: '',
+  geocodeDone: 0,
+  geocodeTotal: FOOD_BANKS.length,
+  geocoding: false,
+};
+
+function setState(patch) {
+  Object.assign(state, patch);
+  render();
+}
+
+function t(key) { return T[state.lang][key] || key; }
+
+// ──────────────────────────────────────────────
+// CACHE HELPERS
+// ──────────────────────────────────────────────
+const GEO_KEY = 'fa_geocode_v2';
+const TIGER_KEY = 'fa_tiger_v1';
+
+function loadGeoCache() {
+  try { return JSON.parse(localStorage.getItem(GEO_KEY) || '{}'); } catch { return {}; }
+}
+function saveGeoCache(c) {
+  try { localStorage.setItem(GEO_KEY, JSON.stringify(c)); } catch {}
+}
+const geoCache = loadGeoCache();
+
+
+// ──────────────────────────────────────────────
+// MAP SETUP
+// ──────────────────────────────────────────────
+const MAPBOX_TOKEN = 'MAPBOX_TOKEN_HERE'; // Replace with your Mapbox public token
+mapboxgl.accessToken = MAPBOX_TOKEN;
+
+const map = new mapboxgl.Map({
+  container: 'map-canvas',
+  style: 'mapbox://styles/mapbox/light-v11',
+  center: [-96, 39],
+  zoom: 3.5,
+  maxBounds: [[-180, 15], [-60, 75]],
+});
+map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
+
+
+map.on('load', async () => {
+  document.getElementById('loading-overlay').classList.add('hidden');
+
+  // Add county layer sources (for choropleth + boundaries)
+  map.addSource('counties-base', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'counties-choropleth',
+    type: 'fill',
+    source: 'counties-base',
+    paint: { 'fill-color': ['get', 'fillColor'], 'fill-opacity': 0.6 },
+    layout: { visibility: 'none' },
+  });
+  map.addLayer({
+    id: 'counties-choropleth-outline',
+    type: 'line',
+    source: 'counties-base',
+    paint: { 'line-color': '#999', 'line-width': 0.3, 'line-opacity': 0.4 },
+    layout: { visibility: 'none' },
+  });
+
+  // Faint state boundary lines (sits above choropleth, below service area)
+  map.addSource('states-boundary', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'states-boundary',
+    type: 'line',
+    source: 'states-boundary',
+    paint: { 'line-color': '#888', 'line-width': 0.8, 'line-opacity': 0.45 },
+  });
+
+  // Service area highlight layer
+  map.addSource('service-area', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'service-area-fill',
+    type: 'fill',
+    source: 'service-area',
+    paint: { 'fill-color': '#003057', 'fill-opacity': 0.13 },
+  });
+  // Subtle county-to-county dividers inside the service area
+  map.addLayer({
+    id: 'service-area-outline',
+    type: 'line',
+    source: 'service-area',
+    paint: { 'line-color': '#7a9db5', 'line-width': 0.6, 'line-opacity': 0.5 },
+  });
+
+  // Outer union boundary — yellow
+  map.addSource('service-area-boundary', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'service-area-boundary',
+    type: 'line',
+    source: 'service-area-boundary',
+    paint: { 'line-color': '#f5c518', 'line-width': 3, 'line-opacity': 1, 'line-join': 'round' },
+  });
+
+  // Nearby search radius circle
+  map.addSource('nearby-circle', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'nearby-circle-fill',
+    type: 'fill',
+    source: 'nearby-circle',
+    paint: { 'fill-color': '#E8703A', 'fill-opacity': 0.07 },
+  });
+  map.addLayer({
+    id: 'nearby-circle-line',
+    type: 'line',
+    source: 'nearby-circle',
+    paint: { 'line-color': '#E8703A', 'line-width': 1.5, 'line-dasharray': [4, 3] },
+  });
+
+  // Food bank points — GL circle layer (no DOM lag)
+  map.addSource('food-banks', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+    generateId: true,
+  });
+  map.addLayer({
+    id: 'food-banks-circle',
+    type: 'circle',
+    source: 'food-banks',
+    paint: {
+      'circle-radius': ['case', ['get', 'selected'], 9, 7],
+      'circle-color': ['case', ['get', 'selected'], '#003057', '#f5c518'],
+      'circle-stroke-width': 2.5,
+      'circle-stroke-color': ['case', ['get', 'selected'], '#f5c518', '#fff'],
+      'circle-pitch-alignment': 'map',
+    },
+  });
+
+  map.on('click', 'food-banks-circle', e => {
+    if (e.features.length) selectBank(e.features[0].properties.id);
+  });
+  map.on('mouseenter', 'food-banks-circle', e => {
+    map.getCanvas().style.cursor = 'pointer';
+    if (e.features.length) {
+      const p = e.features[0].properties;
+      tooltip.textContent = p.name;
+      tooltip.style.display = 'block';
+    }
+  });
+  map.on('mouseleave', 'food-banks-circle', () => {
+    map.getCanvas().style.cursor = '';
+    tooltip.style.display = 'none';
+  });
+  map.on('mousemove', 'food-banks-circle', e => {
+    tooltip.style.left = (e.originalEvent.clientX + 14) + 'px';
+    tooltip.style.top  = (e.originalEvent.clientY - 32) + 'px';
+  });
+
+  // Hover tooltip on service-area counties
+  const tooltip = document.getElementById('map-tooltip');
+  map.on('mousemove', 'service-area-fill', e => {
+    if (!e.features.length) return;
+    const f = e.features[0];
+    const fips = String(f.id || '').padStart(5, '0');
+    const stateAbbr = FIPS_TO_STATE[fips.slice(0, 2)] || '';
+    const countyName = f.properties?.name || '';
+    tooltip.textContent = countyName ? `${countyName} County${stateAbbr ? ', ' + stateAbbr : ''}` : '';
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.originalEvent.clientX + 14) + 'px';
+    tooltip.style.top  = (e.originalEvent.clientY - 32) + 'px';
+    map.getCanvas().style.cursor = 'default';
+  });
+  map.on('mouseleave', 'service-area-fill', () => {
+    tooltip.style.display = 'none';
+    map.getCanvas().style.cursor = '';
+  });
+  map.on('mousemove', e => {
+    // Hide tooltip when not over service area
+    const hit = map.queryRenderedFeatures(e.point, { layers: ['service-area-fill'] });
+    if (!hit.length) { tooltip.style.display = 'none'; map.getCanvas().style.cursor = ''; }
+  });
+
+  // Populate state filter
+  const states = [...new Set(FOOD_BANKS.map(b => b.state))].sort();
+  const sel = document.getElementById('state-filter');
+  states.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  });
+
+  // Load faint state boundaries (also used for state-filter zoom)
+  fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json', { signal: AbortSignal.timeout(15000) })
+    .then(r => r.json())
+    .then(topo => {
+      statesGeoJson = topojson.feature(topo, topo.objects.states);
+      map.getSource('states-boundary').setData(statesGeoJson);
+    }).catch(() => {});
+
+  // Start geocoding
+  await runGeocoding();
+
+  render();
+});
+
+// ──────────────────────────────────────────────
+// GEOCODING
+// ──────────────────────────────────────────────
+async function runGeocoding() {
+  const missing = FOOD_BANKS.filter(b => !geoCache[b.id]);
+  if (!missing.length) {
+    FOOD_BANKS.forEach(b => { if (geoCache[b.id]) { b.lng = geoCache[b.id][0]; b.lat = geoCache[b.id][1]; } });
+    updateBanksSource();
+    return;
+  }
+
+  // Apply already-cached coords immediately
+  FOOD_BANKS.forEach(b => {
+    if (geoCache[b.id]) { b.lng = geoCache[b.id][0]; b.lat = geoCache[b.id][1]; }
+  });
+  updateBanksSource();
+
+  setState({ geocoding: true, geocodeDone: FOOD_BANKS.length - missing.length, geocodeTotal: FOOD_BANKS.length });
+  document.getElementById('geocode-bar').classList.add('visible');
+
+  for (let i = 0; i < missing.length; i++) {
+    const b = missing[i];
+    try {
+      const query = encodeURIComponent(`${b.addr}, ${b.city}, ${b.state} ${b.zip}`);
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?country=us,pr&limit=1&access_token=${MAPBOX_TOKEN}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.features?.[0]) {
+          const [lng, lat] = data.features[0].center;
+          geoCache[b.id] = [lng, lat];
+          b.lng = lng; b.lat = lat;
+        }
+      }
+    } catch {}
+
+    const done = (FOOD_BANKS.length - missing.length) + i + 1;
+    const pct = Math.round((done / FOOD_BANKS.length) * 100);
+    document.getElementById('geocode-fill').style.width = pct + '%';
+    document.getElementById('geocode-label').textContent = `${t('locating')} ${done} / ${FOOD_BANKS.length}`;
+
+    if (i % 10 === 9) { saveGeoCache(geoCache); updateBanksSource(); }
+    if (i < missing.length - 1) await sleep(80);
+  }
+
+  saveGeoCache(geoCache);
+  document.getElementById('geocode-bar').classList.remove('visible');
+  setState({ geocoding: false, geocodeDone: FOOD_BANKS.length });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ──────────────────────────────────────────────
+// MARKERS — GL circle layer (no DOM lag)
+// ──────────────────────────────────────────────
+function updateBanksSource() {
+  const src = map.getSource('food-banks');
+  if (!src) return;
+  const sf = state.stateFilter;
+  const features = FOOD_BANKS
+    .filter(b => b.lng && b.lat && (!sf || b.state === sf))
+    .map(b => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [b.lng, b.lat] },
+      properties: { id: b.id, name: b.name, selected: b.id === state.selectedBank },
+    }));
+  src.setData({ type: 'FeatureCollection', features });
+}
+
+// ──────────────────────────────────────────────
+// BANK SELECTION
+// ──────────────────────────────────────────────
+function selectBank(bankId) {
+  const bank = FOOD_BANKS.find(b => b.id === bankId);
+  if (!bank) return;
+  setState({ selectedBank: bankId }); // triggers render() → updateBanksSource()
+  if (bank.lng && bank.lat) {
+    map.flyTo({ center: [bank.lng, bank.lat], zoom: Math.max(map.getZoom(), 7), speed: 1.4 });
+    loadServiceArea(bank);
+  }
+}
+
+function deselectBank() {
+  setState({ selectedBank: null }); // triggers render() → updateBanksSource()
+  currentServiceAreaFips = [];
+  currentServiceAreaStateFips = '';
+  map.getSource('service-area').setData({ type: 'FeatureCollection', features: [] });
+  map.getSource('service-area-boundary').setData({ type: 'FeatureCollection', features: [] });
+}
+
+// Banks whose service area field uses non-county names — override to full state coverage
+const FULL_STATE_COVERAGE = {
+  'connecticut-foodshare': 'CT',
+};
+
+// ──────────────────────────────────────────────
+// SERVICE AREA — TopoJSON + proximity disambiguation
+// ──────────────────────────────────────────────
+function normalizeCounty(n) {
+  return n.toLowerCase()
+    .replace(/\./g, '')            // st. clair → st clair
+    .replace(/\bsaint\b/g, 'st')  // saint louis → st louis
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Rough centroid from first polygon ring (no extra dep needed)
+function featureCentroid(feature) {
+  const geom = feature.geometry;
+  if (!geom) return null;
+  let ring;
+  if (geom.type === 'Polygon')      ring = geom.coordinates[0];
+  else if (geom.type === 'MultiPolygon') ring = geom.coordinates[0][0];
+  else return null;
+  if (!ring?.length) return null;
+  let sx = 0, sy = 0;
+  for (const [x, y] of ring) { sx += x; sy += y; }
+  return [sx / ring.length, sy / ring.length];
+}
+
+async function loadServiceArea(bank) {
+  // Need HQ coords for proximity disambiguation
+  if (!bank.lng || !bank.lat) return;
+
+  // Clear while loading
+  map.getSource('service-area').setData({ type: 'FeatureCollection', features: [] });
+
+  // Load TopoJSON once (shared with choropleth)
+  if (!topoGeoJson) {
+    try {
+      const res = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json',
+        { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) return;
+      const topo = await res.json();
+      topoGeoJson = topojson.feature(topo, topo.objects.counties);
+    } catch { return; }
+  }
+
+  // Build name index once
+  if (!topoGeoJson._nameIndex) {
+    const idx = {};
+    for (const f of topoGeoJson.features) {
+      const key = normalizeCounty(f.properties?.name || '');
+      if (key) (idx[key] = idx[key] || []).push(f);
+    }
+    topoGeoJson._nameIndex = idx;
+  }
+
+  applyServiceArea(bank, getBankCounties(bank));
+}
+
+// Synchronous county matching — requires topoGeoJson + _nameIndex to be loaded
+function getBankCounties(bank) {
+  if (!topoGeoJson?._nameIndex) return [];
+
+  // Full-state override (e.g. Connecticut uses planning regions, not county names)
+  if (FULL_STATE_COVERAGE[bank.slug]) {
+    const stateFips = STATE_TO_FIPS[FULL_STATE_COVERAGE[bank.slug]];
+    return topoGeoJson.features.filter(f => String(f.id).padStart(5, '0').startsWith(stateFips));
+  }
+
+  const idx = topoGeoJson._nameIndex;
+  const matched = [];
+  for (const rawName of bank.counties.split(',').map(c => normalizeCounty(c))) {
+    if (!rawName) continue;
+    const candidates =
+      idx[rawName] ||
+      idx[rawName.replace(/\s/g, '')] ||
+      Object.entries(idx).find(([k]) => k.replace(/\s/g, '') === rawName.replace(/\s/g, ''))?.[1] ||
+      [];
+    if (!candidates.length) continue;
+    if (candidates.length === 1) { matched.push(candidates[0]); continue; }
+    let best = null, bestDist = Infinity;
+    for (const f of candidates) {
+      const c = featureCentroid(f);
+      if (!c) continue;
+      const dist = Math.hypot(c[0] - bank.lng, c[1] - bank.lat);
+      if (dist < bestDist) { bestDist = dist; best = f; }
+    }
+    if (best) matched.push(best);
+  }
+  return matched;
+}
+
+function applyServiceArea(bank, matched) {
+  // Individual county fills (for hover tooltip)
+  map.getSource('service-area').setData({ type: 'FeatureCollection', features: matched });
+
+  // Store FIPS for health stats
+  currentServiceAreaFips = matched.map(f => String(f.id).padStart(5, '0'));
+  currentServiceAreaStateFips = STATE_TO_FIPS[bank.state] || '';
+
+  // Compute union of all counties → outer yellow boundary only
+  let boundaryData = { type: 'FeatureCollection', features: [] };
+  if (matched.length > 0) {
+    try {
+      const tagged = turf.featureCollection(
+        matched.map(f => turf.feature(f.geometry, { g: 1 }))
+      );
+      const dissolved = turf.dissolve(tagged, { propertyName: 'g' });
+      boundaryData = dissolved;
+    } catch {}
+  }
+  map.getSource('service-area-boundary').setData(boundaryData);
+
+  // Fit map to the full service area (include HQ marker)
+  if (matched.length > 0) {
+    const bounds = new mapboxgl.LngLatBounds();
+    bounds.extend([bank.lng, bank.lat]);
+    for (const f of matched) {
+      const geom = f.geometry;
+      const addRing = ring => ring.forEach(([lng, lat]) => bounds.extend([lng, lat]));
+      if (geom.type === 'Polygon') geom.coordinates.forEach(addRing);
+      else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(poly => poly.forEach(addRing));
+    }
+    map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 1200 });
+  } else {
+    map.flyTo({ center: [bank.lng, bank.lat], zoom: Math.max(map.getZoom(), 7), speed: 1.2 });
+  }
+
+  // Keep service-area + food bank dots on top of choropleth
+  ['nearby-circle-fill','nearby-circle-line','service-area-fill','service-area-outline','service-area-boundary','food-banks-circle'].forEach(id => {
+    if (map.getLayer(id)) map.moveLayer(id);
+  });
+
+  // Load all 3 CDC metrics in background for health stats panel
+  loadAllCdcMetrics();
+}
+
+// ──────────────────────────────────────────────
+// HEALTH LAYERS — CDC PLACES (3 metrics)
+// ──────────────────────────────────────────────
+const LAYERS = {
+  PHLTH:   { label: 'Poor / Fair Health (%)', low: '#fdd49e', high: '#7f0000' },
+  OBESITY: { label: 'Obesity Rate (%)',        low: '#fed976', high: '#800026' },
+  DIABETES:{ label: 'Diabetes Rate (%)',       low: '#c6dbef', high: '#084594' },
+  SNAP:    { label: 'SNAP Recipients (%)',     low: '#edf8e9', high: '#005a32' },
+};
+
+// topo cached once; CDC data cached per measureId
+let topoGeoJson = null;
+let statesGeoJson = null;
+const cdcCache = {};      // measureId → { rateMap, min, max }
+let activeLayer = null;   // currently shown measureId | null
+
+// Service area context for health stats
+let currentServiceAreaFips = [];   // ['01001', '01003', ...]
+let currentServiceAreaStateFips = ''; // '01' (2-digit)
+
+// Shared layer data fetch — populates cdcCache[measureId]
+async function loadCdcMetric(measureId) {
+  if (cdcCache[measureId]) return;
+
+  if (measureId === 'SNAP') {
+    // Census ACS 5-year: % of households receiving SNAP (B22003)
+    const url = 'https://api.census.gov/data/2022/acs/acs5?get=B22003_002E,B22003_001E&for=county:*';
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error('Census fetch failed');
+    const rows = await res.json();
+    const rateMap = {};
+    let min = Infinity, max = -Infinity;
+    // rows[0] is header: ['B22003_002E','B22003_001E','state','county']
+    for (let i = 1; i < rows.length; i++) {
+      const [snapHH, totalHH, stFips, coFips] = rows[i];
+      const total = +totalHH, snap = +snapHH;
+      if (total > 0 && snap >= 0) {
+        const v = (snap / total) * 100;
+        const fips = String(stFips).padStart(2, '0') + String(coFips).padStart(3, '0');
+        rateMap[fips] = v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    const sortedVals = Object.values(rateMap).sort((a, b) => a - b);
+    cdcCache['SNAP'] = { rateMap, min, max, sortedVals };
+    return;
+  }
+
+  // CDC PLACES for health metrics
+  const url = `https://data.cdc.gov/resource/swc5-untb.json?measureid=${measureId}&datavaluetypeid=CrdPrv&$limit=4000&$select=locationid,data_value`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error('CDC fetch failed');
+  const rows = await res.json();
+  const rateMap = {};
+  let min = Infinity, max = -Infinity;
+  rows.forEach(d => {
+    if (d.locationid && d.data_value != null) {
+      const v = +d.data_value;
+      const fipsKey = String(+d.locationid).padStart(5, '0');
+      rateMap[fipsKey] = v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  });
+  const sortedVals = Object.values(rateMap).sort((a, b) => a - b);
+  cdcCache[measureId] = { rateMap, min, max, sortedVals };
+}
+
+// Silently load all 3 metrics in background; re-render detail as each arrives
+async function loadAllCdcMetrics() {
+  for (const id of Object.keys(LAYERS)) {
+    if (!cdcCache[id]) {
+      try {
+        await loadCdcMetric(id);
+        if (state.selectedBank) renderDetail();
+      } catch {}
+    }
+  }
+}
+
+async function setLayer(measureId) {
+  // Toggle off if already active
+  if (activeLayer === measureId) {
+    activeLayer = null;
+    map.setLayoutProperty('counties-choropleth', 'visibility', 'none');
+    map.setLayoutProperty('counties-choropleth-outline', 'visibility', 'none');
+    document.querySelectorAll('.layer-opt').forEach(el => el.classList.remove('active'));
+    document.getElementById('layer-legend').classList.remove('visible');
+    if (state.selectedBank) renderDetail();
+    return;
+  }
+
+  // Highlight selected option
+  document.querySelectorAll('.layer-opt').forEach(el => el.classList.remove('active'));
+  document.getElementById(`opt-${measureId}`)?.classList.add('active');
+
+  try {
+    // Load TopoJSON once
+    if (!topoGeoJson) {
+      const res = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json', { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) throw new Error('TopoJSON fetch failed');
+      const topo = await res.json();
+      topoGeoJson = topojson.feature(topo, topo.objects.counties);
+    }
+
+    // Load CDC data using shared helper
+    await loadCdcMetric(measureId);
+
+    const { rateMap, min, max, sortedVals } = cdcCache[measureId];
+    const cfg = LAYERS[measureId];
+
+    // Quantile normalization: rank each value among all counties for maximum color contrast
+    const quantilePos = v => {
+      let lo = 0, hi = sortedVals.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; sortedVals[mid] < v ? lo = mid + 1 : hi = mid; }
+      return sortedVals.length > 1 ? lo / (sortedVals.length - 1) : 0.5;
+    };
+
+    // Color each county feature
+    const colored = {
+      type: 'FeatureCollection',
+      features: topoGeoJson.features.map(f => {
+        const fips = String(f.id).padStart(5, '0');
+        const rate = rateMap[fips];
+        const fillColor = rate != null
+          ? interpolateColor(cfg.low, cfg.high, quantilePos(rate))
+          : '#e8eaed';
+        return { ...f, properties: { ...f.properties, fillColor, rate } };
+      }),
+    };
+
+    map.getSource('counties-base').setData(colored);
+    map.setLayoutProperty('counties-choropleth', 'visibility', 'visible');
+    map.setLayoutProperty('counties-choropleth-outline', 'visibility', 'visible');
+
+    // Keep service-area + food bank dots on top
+    if (map.getLayer('service-area-fill'))    map.moveLayer('service-area-fill');
+    if (map.getLayer('service-area-outline')) map.moveLayer('service-area-outline');
+    if (map.getLayer('food-banks-circle'))    map.moveLayer('food-banks-circle');
+
+    activeLayer = measureId;
+    renderLegend(measureId, min, max);
+
+    // Refresh detail panel health stats if a bank is selected
+    if (state.selectedBank) renderDetail();
+
+  } catch {
+    document.getElementById(`opt-${measureId}`)?.classList.remove('active');
+    alert('Layer failed to load. Please try again.');
+  }
+}
+
+function renderLegend(measureId, min, max) {
+  const cfg = LAYERS[measureId];
+  document.getElementById('legend-title').textContent = cfg.label;
+  document.getElementById('legend-bar').style.background = `linear-gradient(to right, ${cfg.low}, ${cfg.high})`;
+  document.getElementById('legend-min').textContent = min.toFixed(1) + '%';
+  document.getElementById('legend-max').textContent = max.toFixed(1) + '%';
+  document.getElementById('layer-legend').classList.add('visible');
+}
+
+function interpolateColor(c1, c2, t) {
+  const hex = h => parseInt(h, 16);
+  const r1 = hex(c1.slice(1,3)), g1 = hex(c1.slice(3,5)), b1 = hex(c1.slice(5,7));
+  const r2 = hex(c2.slice(1,3)), g2 = hex(c2.slice(3,5)), b2 = hex(c2.slice(5,7));
+  const r = Math.round(r1 + (r2-r1)*t);
+  const g = Math.round(g1 + (g2-g1)*t);
+  const b = Math.round(b1 + (b2-b1)*t);
+  return `#${[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+}
+
+// ──────────────────────────────────────────────
+// NEAR ME — address lookup + radius filter
+// ──────────────────────────────────────────────
+let nearbyCenter = null;   // [lng, lat]
+let nearbyRadius = 10;     // miles
+
+function haversine(lng1, lat1, lng2, lat2) {
+  const R = 3958.8, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function searchAddress() {
+  const query = document.getElementById('addr-input').value.trim();
+  if (!query) return;
+  try {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?country=us,pr&limit=1&access_token=${MAPBOX_TOKEN}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error('Geocode failed');
+    const data = await res.json();
+    if (!data.features?.length) { alert('Address not found. Try a more specific address.'); return; }
+    const [lng, lat] = data.features[0].center;
+    showNearby(lng, lat);
+  } catch { alert('Address lookup failed. Please try again.'); }
+}
+
+function locateUser() {
+  if (!navigator.geolocation) return alert('Geolocation not available.');
+  navigator.geolocation.getCurrentPosition(
+    pos => showNearby(pos.coords.longitude, pos.coords.latitude),
+    () => alert('Unable to get your location.')
+  );
+}
+
+function showNearby(lng, lat) {
+  nearbyCenter = [lng, lat];
+  map.flyTo({ center: [lng, lat], zoom: zoomForMiles(nearbyRadius), speed: 1.4 });
+
+  const circle = turf.circle([lng, lat], nearbyRadius, { units: 'miles', steps: 64 });
+  map.getSource('nearby-circle').setData(circle);
+
+  // Each result: { bank, hqDist, byServiceArea }
+  const results = [];
+  for (const b of FOOD_BANKS) {
+    if (!b.lng || !b.lat) continue;
+    const hqDist = haversine(lng, lat, b.lng, b.lat);
+    if (hqDist <= nearbyRadius) {
+      results.push({ bank: b, hqDist, byServiceArea: false });
+      continue;
+    }
+    // Check if any service-area county polygon overlaps the circle
+    if (topoGeoJson?._nameIndex) {
+      const counties = getBankCounties(b);
+      const overlaps = counties.some(f => {
+        const c = featureCentroid(f);
+        // Fast centroid pre-filter before running full intersection
+        if (c && haversine(lng, lat, c[0], c[1]) > nearbyRadius + 60) return false;
+        try { return turf.booleanIntersects(circle, f); } catch { return false; }
+      });
+      if (overlaps) results.push({ bank: b, hqDist, byServiceArea: true });
+    }
+  }
+
+  setState({ searchQuery: '', stateFilter: '' });
+
+  results.sort((a, b) => a.hqDist - b.hqDist);
+
+  const countEl = document.getElementById('nearby-count');
+  document.getElementById('nearby-count-text').textContent =
+    `${results.length} food bank${results.length !== 1 ? 's' : ''} within ${nearbyRadius} mi`;
+  countEl.classList.add('visible');
+
+  renderNearbyList(results);
+}
+
+function renderNearbyList(results) {
+  const el = document.getElementById('bank-list');
+  if (!results.length) {
+    el.innerHTML = `<div class="no-results">No food banks within ${nearbyRadius} miles.</div>`;
+    return;
+  }
+  el.innerHTML = results.map(({ bank: b, hqDist, byServiceArea }) => {
+    const locStr = byServiceArea
+      ? `<span style="color:#7a9db5;font-weight:600">Serves this area · </span>`
+      : `<span style="color:#E8703A;font-weight:600">${hqDist.toFixed(1)} mi · </span>`;
+    return `
+      <div class="bank-item${b.id === state.selectedBank ? ' active' : ''}" onclick="selectBank(${b.id})">
+        <div class="bank-icon"></div>
+        <div class="bank-info">
+          <div class="bank-item-name">${escHtml(b.name)}</div>
+          <div class="bank-item-loc">${locStr}${escHtml(b.city)}, ${b.state}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function setRadius(miles) {
+  nearbyRadius = miles;
+  document.querySelectorAll('.radius-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.textContent) === miles);
+  });
+  if (nearbyCenter) showNearby(...nearbyCenter);
+}
+
+function clearNearby() {
+  nearbyCenter = null;
+  map.getSource('nearby-circle').setData({ type: 'FeatureCollection', features: [] });
+  document.getElementById('nearby-count').classList.remove('visible');
+  document.getElementById('addr-input').value = '';
+  render(); // restore normal list
+}
+
+function zoomForMiles(miles) {
+  if (miles <= 5) return 11;
+  if (miles <= 10) return 10;
+  if (miles <= 20) return 9;
+  return 8;
+}
+
+// ──────────────────────────────────────────────
+// LANGUAGE TOGGLE
+// ──────────────────────────────────────────────
+function toggleLang() {
+  const lang = state.lang === 'en' ? 'es' : 'en';
+  setState({ lang });
+  document.documentElement.lang = lang;
+  document.getElementById('lang-toggle').textContent = lang === 'en' ? 'Español' : 'English';
+  document.getElementById('search-input').placeholder = t('searchPlaceholder');
+  document.getElementById('topbar-title').textContent = t('title');
+  document.getElementById('locate-user-btn').textContent = `📍 ${t('nearMe')}`;
+  document.querySelector('#state-filter option[value=""]').textContent = t('allStates');
+}
+
+// ──────────────────────────────────────────────
+// FILTER + STATE ZOOM
+// ──────────────────────────────────────────────
+function onStateFilter(value) {
+  setState({ stateFilter: value, selectedBank: null });
+  if (value) {
+    flyToState(value);
+  } else {
+    map.flyTo({ center: [-96, 39], zoom: 3.5, speed: 1.2 });
+  }
+}
+
+function flyToState(abbr) {
+  if (!statesGeoJson) return;
+  const fips = STATE_TO_FIPS[abbr];
+  if (!fips) return;
+  const feature = statesGeoJson.features.find(f => String(f.id).padStart(2, '0') === fips);
+  if (!feature) return;
+  const bounds = new mapboxgl.LngLatBounds();
+  const addRing = ring => ring.forEach(([lng, lat]) => bounds.extend([lng, lat]));
+  const geom = feature.geometry;
+  if (geom.type === 'Polygon') geom.coordinates.forEach(addRing);
+  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(poly => poly.forEach(addRing));
+  map.fitBounds(bounds, { padding: 40, maxZoom: 8, duration: 1000 });
+}
+
+function filteredBanks() {
+  const q = state.searchQuery.toLowerCase().trim();
+  const s = state.stateFilter;
+  return FOOD_BANKS.filter(b => {
+    if (s && b.state !== s) return false;
+    if (!q) return true;
+    return b.name.toLowerCase().includes(q) || b.city.toLowerCase().includes(q) || b.counties.toLowerCase().includes(q);
+  });
+}
+
+// ──────────────────────────────────────────────
+// RENDER
+// ──────────────────────────────────────────────
+function render() {
+  renderList();
+  renderDetail();
+  updateBanksSource();
+}
+
+function renderList() {
+  const banks = filteredBanks();
+  const el = document.getElementById('bank-list');
+  const total = FOOD_BANKS.length;
+  const countBar = document.getElementById('bank-count-bar');
+  const countLabel = banks.length === total
+    ? 'food banks nationwide'
+    : `of ${total} food banks`;
+  countBar.innerHTML = `<span id="bank-count-num">${banks.length}</span><span id="bank-count-label">${countLabel}</span>`;
+
+  if (!banks.length) {
+    el.innerHTML = `<div class="no-results">${t('noResults')}</div>`;
+    return;
+  }
+
+  el.innerHTML = banks.map(b => `
+    <div class="bank-item${b.id === state.selectedBank ? ' active' : ''}" onclick="selectBank(${b.id})">
+      <div class="bank-icon">🏛️</div>
+      <div class="bank-info">
+        <div class="bank-item-name">${escHtml(b.name)}</div>
+        <div class="bank-item-loc">${escHtml(b.city)}, ${b.state}</div>
+      </div>
+    </div>
+  `).join('');
+
+  // Scroll selected item into view
+  if (state.selectedBank) {
+    const active = el.querySelector('.bank-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function renderDetail() {
+  const panel = document.getElementById('detail-panel');
+  if (!state.selectedBank) {
+    panel.classList.remove('visible');
+    return;
+  }
+  const b = FOOD_BANKS.find(x => x.id === state.selectedBank);
+  if (!b) { panel.classList.remove('visible'); return; }
+
+  panel.classList.add('visible');
+
+  document.getElementById('dp-name').textContent = b.name;
+  document.getElementById('dp-location').textContent = `${b.addr}, ${b.city}, ${b.state} ${b.zip}`;
+
+  const countiesList = b.counties.split(',')
+    .map(c => c.trim().replace(/\b\w/g, l => l.toUpperCase()))
+    .join(' · ');
+
+  const logoUrl = BANK_LOGOS[b.slug];
+  const logoHtml = logoUrl
+    ? `<div style="text-align:center;padding:14px 12px 10px;border-bottom:1px solid #eee;margin-bottom:4px;">
+        <img src="${escHtml(logoUrl)}" alt="${escHtml(b.name)}" loading="lazy"
+          style="max-height:56px;max-width:220px;width:auto;object-fit:contain;"
+          onerror="this.parentElement.style.display='none'">
+       </div>`
+    : '';
+
+  document.getElementById('dp-body').innerHTML = `
+    ${logoHtml}
+    <div class="detail-row">
+      <span class="detail-label">${t('phone')}</span>
+      <span class="detail-val"><a href="tel:${escHtml(b.phone)}">${escHtml(b.phone)}</a></span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">${t('website')}</span>
+      <span class="detail-val"><a href="https://${escHtml(b.website)}" target="_blank" rel="noopener">${escHtml(b.website)}</a></span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Counties in Service Area</span>
+      <span class="detail-val counties-list">${escHtml(countiesList)}</span>
+    </div>
+    ${renderHealthStats()}
+  `;
+
+  document.getElementById('dp-actions').innerHTML = `
+    <a class="detail-btn btn-primary" href="${escHtml(b.findFood)}" target="_blank" rel="noopener">${t('findFood')}</a>
+    <a class="detail-btn btn-secondary" href="${escHtml(b.volunteer)}" target="_blank" rel="noopener">${t('volunteer')}</a>
+    <a class="detail-btn btn-outline" href="${escHtml(b.donate)}" target="_blank" rel="noopener">${t('donate')}</a>
+  `;
+}
+
+function renderHealthStats() {
+  if (!currentServiceAreaFips.length) return '';
+
+  const anyLoaded = Object.keys(LAYERS).some(id => cdcCache[id]);
+  if (!anyLoaded) {
+    return `<div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
+      <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Health Indicators</div>
+      <div style="font-size:12px;color:#aaa;">Loading health data…</div>
+    </div>`;
+  }
+
+  const fmt = v => v != null ? v.toFixed(1) + '%' : null;
+  const statePrefix = currentServiceAreaStateFips;
+
+  function metricStats(measureId) {
+    const cached = cdcCache[measureId];
+    if (!cached) return null;
+    const { rateMap } = cached;
+    const saVals = currentServiceAreaFips.map(f => rateMap[f]).filter(v => v != null);
+    if (!saVals.length) return null;
+    const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const saAvg = avg(saVals);
+    const stateVals = statePrefix
+      ? Object.entries(rateMap).filter(([f]) => f.startsWith(statePrefix)).map(([, v]) => v)
+      : [];
+    const stateAvg = stateVals.length ? avg(stateVals) : null;
+    const allVals = Object.values(rateMap);
+    const natAvg = allVals.length ? avg(allVals) : null;
+    return { saAvg, stateAvg, natAvg };
+  }
+
+  function metricCard(measureId) {
+    const cfg = LAYERS[measureId];
+    const stats = metricStats(measureId);
+
+    if (!stats) {
+      return `<div style="margin-bottom:14px;">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">${cfg.label}</div>
+        <div style="font-size:11px;color:#bbb;">Data unavailable</div>
+      </div>`;
+    }
+
+    const { saAvg, stateAvg, natAvg } = stats;
+
+    // Delta badge vs national
+    const diff = natAvg != null ? saAvg - natAvg : null;
+    let badge = '';
+    if (diff != null) {
+      if (Math.abs(diff) < 0.3) {
+        badge = `<span style="background:#f0f0f0;color:#888;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;">≈ US avg</span>`;
+      } else if (diff > 0) {
+        badge = `<span style="background:#fdecea;color:#c0392b;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;">▲ ${diff.toFixed(1)}% above US</span>`;
+      } else {
+        badge = `<span style="background:#eafaf1;color:#27ae60;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;">▼ ${Math.abs(diff).toFixed(1)}% below US</span>`;
+      }
+    }
+
+    // Bar chart: normalize bars to max of the three values + 20% headroom
+    const maxVal = Math.max(saAvg, stateAvg ?? 0, natAvg ?? 0) * 1.25 || 1;
+    const barPct = v => v != null ? Math.round((v / maxVal) * 100) : 0;
+
+    function bar(val, color, label) {
+      const pct = barPct(val);
+      const valStr = fmt(val) ?? '—';
+      return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <div style="width:62px;font-size:10px;color:#888;flex-shrink:0;">${label}</div>
+        <div style="flex:1;background:#f0f2f5;border-radius:3px;height:8px;overflow:hidden;">
+          <div style="width:${pct}%;background:${color};height:100%;border-radius:3px;transition:width .4s;"></div>
+        </div>
+        <div style="width:34px;font-size:11px;font-weight:600;color:#1a2533;text-align:right;flex-shrink:0;">${valStr}</div>
+      </div>`;
+    }
+
+    return `<div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.4px;">${cfg.label}</div>
+        ${badge}
+      </div>
+      ${bar(saAvg,    '#003057', 'Service area')}
+      ${bar(stateAvg, '#7a9db5', 'State avg')}
+      ${bar(natAvg,   '#c8d8e4', 'US avg')}
+    </div>`;
+  }
+
+  const cards = Object.keys(LAYERS).map(metricCard).join('');
+  return `<div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
+    <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Health Indicators</div>
+    ${cards}
+    <div style="font-size:10px;color:#bbb;margin-top:2px;">Source: CDC PLACES 2023</div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ──────────────────────────────────────────────
+// INIT
+// ──────────────────────────────────────────────
+document.getElementById('loading-msg').textContent = t('loadingMap');
+render();
+</script>
+</body>
+</html>
