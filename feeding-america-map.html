@@ -179,9 +179,19 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: 
 }
 #layer-panel-title {
   font-size: 11px; font-weight: 700; color: #003057; text-transform: uppercase;
-  letter-spacing: .5px; margin-bottom: 8px; padding-bottom: 6px;
+  letter-spacing: .5px; margin-bottom: 4px;
+}
+#layer-hint {
+  font-size: 10px; color: #8a96a3; margin-bottom: 8px; padding-bottom: 6px;
   border-bottom: 1px solid #eaecef;
 }
+#layer-hint.hidden { display: none; }
+@keyframes layer-nudge {
+  0%   { background: transparent; }
+  40%  { background: #e8f0fb; }
+  100% { background: transparent; }
+}
+.layer-opt.nudge { animation: layer-nudge 1.2s ease 0.6s 2; }
 .layer-opt {
   display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 6px;
   cursor: pointer; font-size: 12px; color: #1a2533; transition: background .1s;
@@ -308,6 +318,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: 
     <!-- Health layers panel (bottom-left, always open) -->
     <div id="layer-panel">
       <div id="layer-panel-title">Health Layers</div>
+      <div id="layer-hint">Click a layer to overlay on map</div>
       <div class="layer-opt" id="opt-PHLTH" onclick="setLayer('PHLTH')">
         <div class="layer-swatch" style="background:linear-gradient(to right,#fdd49e,#7f0000)"></div>
         Poor / Fair Health
@@ -934,6 +945,9 @@ map.on('load', async () => {
 
   updateBanksSource();
   render();
+
+  // Nudge the first layer option twice to hint it's clickable
+  document.getElementById('opt-PHLTH').classList.add('nudge');
 });
 
 // ──────────────────────────────────────────────
@@ -1195,6 +1209,10 @@ async function loadAllCdcMetrics() {
 }
 
 async function setLayer(measureId) {
+  // Hide discovery hint and nudge animation on first use
+  document.getElementById('layer-hint').classList.add('hidden');
+  document.querySelectorAll('.layer-opt.nudge').forEach(el => el.classList.remove('nudge'));
+
   // Toggle off if already active
   if (activeLayer === measureId) {
     activeLayer = null;
