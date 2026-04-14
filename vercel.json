@@ -1,5 +1,5 @@
 {
-  "buildCommand": null,
+  "buildCommand": "sed -i 's/MAPBOX_TOKEN_HERE/'\"$MAPBOX_TOKEN\"'/g' feeding-america-map.html",
   "outputDirectory": ".",
   "framework": null,
   "rewrites": [
