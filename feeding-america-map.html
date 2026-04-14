@@ -946,8 +946,8 @@ map.on('load', async () => {
   updateBanksSource();
   render();
 
-  // Nudge the first layer option twice to hint it's clickable
-  document.getElementById('opt-PHLTH').classList.add('nudge');
+  // Load SNAP layer by default
+  setLayer('SNAP');
 });
 
 // ──────────────────────────────────────────────
