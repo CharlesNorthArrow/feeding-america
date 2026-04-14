@@ -844,13 +844,27 @@ map.on('load', async () => {
     data: { type: 'FeatureCollection', features: [] },
     generateId: true,
   });
+  // Pulse halo layer — renders behind main circles for nearby-search results
+  map.addLayer({
+    id: 'food-banks-pulse',
+    type: 'circle',
+    source: 'food-banks',
+    filter: ['==', ['get', 'nearby'], true],
+    paint: {
+      'circle-radius': 16,
+      'circle-color': '#f5c518',
+      'circle-opacity': 0,
+      'circle-stroke-width': 0,
+      'circle-pitch-alignment': 'map',
+    },
+  });
   map.addLayer({
     id: 'food-banks-circle',
     type: 'circle',
     source: 'food-banks',
     paint: {
-      'circle-radius': ['case', ['get', 'selected'], 9, 7],
-      'circle-color': ['case', ['get', 'selected'], '#003057', '#f5c518'],
+      'circle-radius': ['case', ['get', 'selected'], 9, ['get', 'nearby'], 9, 7],
+      'circle-color': ['case', ['get', 'selected'], '#003057', ['get', 'nearby'], '#E8703A', '#f5c518'],
       'circle-stroke-width': 2.5,
       'circle-stroke-color': ['case', ['get', 'selected'], '#f5c518', '#fff'],
       'circle-pitch-alignment': 'map',
@@ -934,7 +948,7 @@ function updateBanksSource() {
     .map(b => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [b.lng, b.lat] },
-      properties: { id: b.id, name: b.name, selected: b.id === state.selectedBank },
+      properties: { id: b.id, name: b.name, selected: b.id === state.selectedBank, nearby: nearbyBankIds.has(b.id) },
     }));
   src.setData({ type: 'FeatureCollection', features });
 }
@@ -1238,6 +1252,7 @@ async function setLayer(measureId) {
     // Keep service-area + food bank dots on top
     if (map.getLayer('service-area-fill'))    map.moveLayer('service-area-fill');
     if (map.getLayer('service-area-outline')) map.moveLayer('service-area-outline');
+    if (map.getLayer('food-banks-pulse'))     map.moveLayer('food-banks-pulse');
     if (map.getLayer('food-banks-circle'))    map.moveLayer('food-banks-circle');
 
     activeLayer = measureId;
@@ -1276,6 +1291,32 @@ function interpolateColor(c1, c2, t) {
 // ──────────────────────────────────────────────
 let nearbyCenter = null;   // [lng, lat]
 let nearbyRadius = 10;     // miles
+let nearbyBankIds = new Set(); // IDs of banks matching current nearby search
+let pulseRafId = null;     // requestAnimationFrame handle for pulse animation
+
+function startPulse() {
+  if (pulseRafId) cancelAnimationFrame(pulseRafId);
+  const start = performance.now();
+  function frame(now) {
+    const t = ((now - start) % 1800) / 1800; // 1.8s cycle
+    // Ease out: expand from 9→22px, fade from 0.6→0
+    const r = 9 + t * 13;
+    const opacity = 0.6 * (1 - t);
+    if (map.getLayer('food-banks-pulse')) {
+      map.setPaintProperty('food-banks-pulse', 'circle-radius', r);
+      map.setPaintProperty('food-banks-pulse', 'circle-opacity', opacity);
+    }
+    pulseRafId = requestAnimationFrame(frame);
+  }
+  pulseRafId = requestAnimationFrame(frame);
+}
+
+function stopPulse() {
+  if (pulseRafId) { cancelAnimationFrame(pulseRafId); pulseRafId = null; }
+  if (map.getLayer('food-banks-pulse')) {
+    map.setPaintProperty('food-banks-pulse', 'circle-opacity', 0);
+  }
+}
 
 function haversine(lng1, lat1, lng2, lat2) {
   const R = 3958.8, rad = Math.PI / 180;
@@ -1335,6 +1376,10 @@ function showNearby(lng, lat) {
     }
   }
 
+  nearbyBankIds = new Set(results.map(r => r.bank.id));
+  updateBanksSource();
+  startPulse();
+
   setState({ searchQuery: '', stateFilter: '' });
 
   results.sort((a, b) => a.hqDist - b.hqDist);
@@ -1378,6 +1423,9 @@ function setRadius(miles) {
 
 function clearNearby() {
   nearbyCenter = null;
+  nearbyBankIds = new Set();
+  stopPulse();
+  updateBanksSource();
   map.getSource('nearby-circle').setData({ type: 'FeatureCollection', features: [] });
   document.getElementById('nearby-count').classList.remove('visible');
   document.getElementById('addr-input').value = '';
